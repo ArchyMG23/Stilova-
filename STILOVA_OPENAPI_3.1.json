@@ -1,0 +1,2436 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Stilova API - Spécifications Spécialiste",
+    "description": "Contrat d'interface unifié (API Contract) haute couture liant le backend NestJS de Stilova et le client mobile Flutter. Architecture RESTful complète sous contrôle d'accès basé sur les rôles (RBAC). Préfixe obligatoire: `/api/v1`.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Équipe Technique Stilova",
+      "email": "architecture@stilova.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.stilova.com/api/v1",
+      "description": "Serveur de Production Principal"
+    },
+    {
+      "url": "https://api-staging.stilova.com/api/v1",
+      "description": "Serveur de Staging"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Création d'un compte utilisateur",
+        "description": "Permet de concevoir un nouveau profil utilisateur Stilova. Validation automatique de robustesse du mot de passe.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDto"
+              },
+              "example": {
+                "email": "griote.nomade@stilova.com",
+                "password": "MansaMusaSecure123!",
+                "preferredMode": "READER",
+                "genres": ["AFROFUTURISM", "FANTASY_MYTHIQUE"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Utilisateur créé avec succès",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseRegister"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Erreur de validation (mot de passe faible, email mal formé)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Adresse email déjà enregistrée dans le système",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Connexion utilisateur",
+        "description": "Valide l'identité de l'utilisateur par e-mail et mot de passe, renvoie le couple de tokens JWS.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              },
+              "example": {
+                "email": "kofi.amadou@stilova.com",
+                "password": "StrongPassword123!"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connexion établie, jetons remis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseLogin"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Identifiants invalides ou compte suspendu",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Déconnexion globale",
+        "description": "Révoque le Token d'accès en l'ajoutant à la liste noire (Blacklist Redis) du serveur.",
+        "responses": {
+          "200": {
+            "description": "Déconnexion réussie historique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseSimple"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non autorisé"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Renouvellement des jetons",
+        "description": "Consomme un jeton de rafraîchissement valide pour émettre un nouveau couple access/refresh token.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["refreshToken"],
+                "properties": {
+                  "refreshToken": {
+                    "type": "string",
+                    "description": "Token JWT de renouvellement sécurisé"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tokens renouvelés avec succès",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "accessToken": { "type": "string" },
+                        "refreshToken": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Demande de réinitialisation de mot de passe",
+        "description": "Provoque l'expédition d'un courrier transactionnel doté d'un lien sécurisé temporaire.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mail d'instructions expédié si le compte existe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseSimple"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Actualisation du mot de passe",
+        "description": "Consomme le jeton de sécurité envoyé par mail pour asseoir le nouveau mot de passe.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "newPassword"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "newPassword": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mot de passe restauré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseSimple"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Vérification de l'adresse de courrier électronique",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "properties": {
+                  "token": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Adresse identifiée avec mention de succès"
+          }
+        }
+      }
+    },
+    "/auth/resend-verification": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Renvoyer l'e-mail de validation",
+        "responses": {
+          "200": {
+            "description": "Courrier relancé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponseSimple"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/2fa/enable": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Initier l'activation de l'Authentification à Double Facteur (2FA)",
+        "description": "Structure un secret TOTP partagé et retourne une URL de QR Code à consommer par le client.",
+        "responses": {
+          "200": {
+            "description": "Instructions d'initialisation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "secret": { "type": "string", "example": "JBSWY3DPEHPK3PXP" },
+                        "qrCodeUrl": { "type": "string", "example": "otpauth://totp/Stilova:User?secret=JBSWY3D" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/2fa/verify": {
+      "post": {
+        "tags": ["Auth Module"],
+        "summary": "Finaliser et scinder l'activation 2FA",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": { "type": "string", "minLength": 6, "maxLength": 6, "example": "123456" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "2FA raccordé et actif"
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": ["Users Module"],
+        "summary": "Obtenir l'identité connectée",
+        "description": "Retourne l'utilisateur courant, ses métadonnées de profil, son rôle RBAC actif et ses autorisations explicites.",
+        "responses": {
+          "200": {
+            "description": "Profil récupéré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Users Module"],
+        "summary": "Mettre à jour ses coordonnées",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profil rectifié avec brio"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Users Module"],
+        "summary": "Demande de radiation du compte",
+        "description": "Marque le compte comme désinscrit et active une suppression complète programmée sous 30 jours.",
+        "responses": {
+          "200": {
+            "description": "Compte programmé pour effacement"
+          }
+        }
+      }
+    },
+    "/users/me/avatar": {
+      "patch": {
+        "tags": ["Users Module"],
+        "summary": "Mettre à jour l'avatar de l'identité connectée",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["avatarUrl"],
+                "properties": {
+                  "avatarUrl": { "type": "string", "format": "uri" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Avatar actualisé"
+          }
+        }
+      }
+    },
+    "/users/me/banner": {
+      "patch": {
+        "tags": ["Users Module"],
+        "summary": "Mettre à jour la bannière d'en-tête de profil",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bannerUrl"],
+                "properties": {
+                  "bannerUrl": { "type": "string", "format": "uri" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bannière actualisée"
+          }
+        }
+      }
+    },
+    "/settings/privacy": {
+      "get": {
+        "tags": ["Settings Module"],
+        "summary": "Récupérer la cartographie de confidentialité",
+        "responses": {
+          "200": {
+            "description": "Préférences remises",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacySettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Settings Module"],
+        "summary": "Ajuster sa visibilité publique",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePrivacyDto"
+              },
+              "example": {
+                "showLibrary": true,
+                "showFavorites": true,
+                "showHistory": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Préférences enregistrées"
+          }
+        }
+      }
+    },
+    "/settings/notifications": {
+      "get": {
+        "tags": ["Settings Module"],
+        "summary": "Lister les canaux configurés",
+        "responses": {
+          "200": {
+            "description": "Liste de canaux remise"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Settings Module"],
+        "summary": "Actualiser le routage des notifications",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "emailEnabled": { "type": "boolean" },
+                  "pushEnabled": { "type": "boolean" },
+                  "battleAlerts": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Prêt"
+          }
+        }
+      }
+    },
+    "/settings/sessions": {
+      "get": {
+        "tags": ["Settings Module"],
+        "summary": "Visualiser les connexions d'appareils",
+        "description": "Affiche l'historique complet des navigateurs, mobiles et jetons actifs pour ce compte.",
+        "responses": {
+          "200": {
+            "description": "Liste récapitulative des terminaux",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionMetaData"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings/sessions/{id}": {
+      "delete": {
+        "tags": ["Settings Module"],
+        "summary": "Révocation à distance d'un terminal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Terminal déconnecté"
+          }
+        }
+      }
+    },
+    "/stories": {
+      "get": {
+        "tags": ["Stories Module"],
+        "summary": "Parcours et recherche d'histoires",
+        "description": "Moteur généraliste d'exploration paginée doté de filtres avancés.",
+        "security": [],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["popular", "recent", "rating"] } },
+          { "name": "genre", "in": "query", "schema": { "type": "string" } },
+          { "name": "author", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "ARCHIVED"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résultats de recherche segmentés",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoriesPaginatedResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Stories Module"],
+        "summary": "Ébauche d'une nouvelle œuvre",
+        "description": "Créer un registre d'œuvre. Requiert le privilège `story.create`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Œuvre cataloguée en brouillon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessStoryCreated"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stories/me": {
+      "get": {
+        "tags": ["Stories Module"],
+        "summary": "Lister mes créations personnelles",
+        "description": "Permet au Griot connecté d'administrer et modifier ses œuvres déposées.",
+        "responses": {
+          "200": {
+            "description": "Liste de vos créations historiques"
+          }
+        }
+      }
+    },
+    "/stories/{id}": {
+      "get": {
+        "tags": ["Stories Module"],
+        "summary": "Consulter une fiche d'œuvre",
+        "security": [],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détails de l'histoire et structure de chapitres",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoryDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Stories Module"],
+        "summary": "Amender une histoire",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Modifications actées avec triomphe"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Stories Module"],
+        "summary": "Dépôt d'œuvre aux oubliettes (Soft deletion)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Histoire archivée administrativement (remorquée au placard)"
+          }
+        }
+      }
+    },
+    "/stories/{id}/publish": {
+      "post": {
+        "tags": ["Stories Module"],
+        "summary": "Déploiement public d'une œuvre",
+        "description": "Rend l'œuvre entièrement visible sur d'autres portails. Permission : `story.publish`.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Œuvre ouverte au public de Stilova"
+          }
+        }
+      }
+    },
+    "/stories/{id}/archive": {
+      "post": {
+        "tags": ["Stories Module"],
+        "summary": "Retirer l'œuvre de la circulation active",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "L'histoire est basculée au statut archivé"
+          }
+        }
+      }
+    },
+    "/stories/{id}/cover": {
+      "post": {
+        "tags": ["Stories Module"],
+        "summary": "Assigner l'affiche",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["coverUrl"],
+                "properties": {
+                  "coverUrl": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Jaquette sauvegardée"
+          }
+        }
+      }
+    },
+    "/chapters": {
+      "post": {
+        "tags": ["Chapters Module"],
+        "summary": "Concevoir un nouveau chapitre littéraire",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateChapterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Chapitre conçu"
+          }
+        }
+      }
+    },
+    "/chapters/{id}": {
+      "patch": {
+        "tags": ["Chapters Module"],
+        "summary": "Enregistrer des écrits de bloc pour ce chapitre",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChapterDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enregistrement du bloc validé"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Chapters Module"],
+        "summary": "Destitution d'un chapitre de la timeline",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Démolition complétée"
+          }
+        }
+      }
+    },
+    "/chapters/{id}/publish": {
+      "post": {
+        "tags": ["Chapters Module"],
+        "summary": "Rendre un chapitre lisible par la foule",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chapitre publié!"
+          }
+        }
+      }
+    },
+    "/chapters/story/{storyId}": {
+      "get": {
+        "tags": ["Chapters Module"],
+        "summary": "Lister l'ordre chronologique linéaire de cette œuvre",
+        "security": [],
+        "parameters": [
+          { "name": "storyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table des matières complète"
+          }
+        }
+      }
+    },
+    "/interactive/choices": {
+      "post": {
+        "tags": ["Interactive Module"],
+        "summary": "Insérer un nœud d'embranchement interactif",
+        "description": "Associe un choix à effectuer en fin de chapitre à une autre station de l'œuvre.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChoiceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Nœud de bifurcation mémorisé"
+          }
+        }
+      }
+    },
+    "/interactive/choices/{id}": {
+      "patch": {
+        "tags": ["Interactive Module"],
+        "summary": "Ajuster la direction ou le titre du bouton d'embranchement",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+         "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Choix adapté"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Interactive Module"],
+        "summary": "Arrachage du nœud de décision",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nœud destitué avec succès"
+          }
+        }
+      }
+    },
+    "/interactive/story/{storyId}/graph": {
+      "get": {
+        "tags": ["Interactive Module"],
+        "summary": "Obtenir la topologie du graphe interactif",
+        "description": "Retourne les liaisons chapitres-aux-bifurcations utiles pour l'afficheur graphique interactif Flutter.",
+        "parameters": [
+          { "name": "storyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Données topologiques",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NarrativeGraph"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/interactive/story/{storyId}/validate": {
+      "post": {
+        "tags": ["Interactive Module"],
+        "summary": "Validation cybernétique de la géométrie de l'ouvrage",
+        "description": "Vérifie l'intégrité topologique, confirmant l'absence de boucles infinies vicieuses, d'impasses non résolues et d'isolats célestes.",
+        "parameters": [
+          { "name": "storyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rapport analytique complet de validité",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "valid": { "type": "boolean", "example": true },
+                    "anomalies": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library": {
+      "get": {
+        "tags": ["Library Module"],
+        "summary": "Exploration de votre bibliothèque",
+        "description": "Extrait l'ensemble des lectures suivies, mémorisées ou marquées 'À lire'.",
+        "responses": {
+          "200": {
+            "description": "Inventaire littéraire de session"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Library Module"],
+        "summary": "Attacher une œuvre à ma bibliothèque",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["storyId"],
+                "properties": {
+                  "storyId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Livre empilé sur le granger"
+          }
+        }
+      }
+    },
+    "/library/{storyId}": {
+      "delete": {
+        "tags": ["Library Module"],
+        "summary": "Désancrer un livre de ma bibliothèque",
+        "parameters": [
+          { "name": "storyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Livre retourné aux allées communes"
+          }
+        }
+      }
+    },
+    "/library/offline": {
+      "get": {
+        "tags": ["Library Module"],
+        "summary": "Relever les récits déjà téléchargés hors-ligne",
+        "responses": {
+          "200": {
+            "description": "Index hors-ligne"
+          }
+        }
+      }
+    },
+    "/library/offline/{storyId}": {
+      "post": {
+        "tags": ["Library Module"],
+        "summary": "Télécharger en cache local",
+        "description": "Compile tous les chapitres d'un livre en une sainte alliance compressée autonome pour que Flutter la conserve localement.",
+        "parameters": [
+          { "name": "storyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload complet zippé remis"
+          }
+        }
+      }
+    },
+    "/bookmarks": {
+      "get": {
+        "tags": ["Bookmarks Module"],
+        "summary": "Rappeler mes signets et notes",
+        "responses": {
+          "200": {
+            "description": "Index de vos reliquats de lecture"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Bookmarks Module"],
+        "summary": "Créer un signet précis",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookmarkDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Signet apposé"
+          }
+        }
+      }
+    },
+    "/bookmarks/{id}": {
+      "patch": {
+        "tags": ["Bookmarks Module"],
+        "summary": "Saturer de remarques ce signet",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["note"],
+                "properties": {
+                  "note": { "type": "string", "example": "Phrase choc sur la destinée" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Savoir annexé"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Bookmarks Module"],
+        "summary": "Effacer ce signet",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Libre"
+          }
+        }
+      }
+    },
+    "/comments": {
+      "post": {
+        "tags": ["Comments Module"],
+        "summary": "Ajouter un commentaire",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCommentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Commentaire publié"
+          }
+        }
+      }
+    },
+    "/comments/{id}": {
+      "patch": {
+        "tags": ["Comments Module"],
+        "summary": "Modifier son post",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["content"],
+                "properties": {
+                  "content": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Publication réajustée"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Comments Module"],
+        "summary": "Effacer son post",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contenu nettoyé"
+          }
+        }
+      }
+    },
+    "/comments/{id}/like": {
+      "post": {
+        "tags": ["Comments Module"],
+        "summary": "Apporter sa bienveillance à ce post",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post liké / unliké"
+          }
+        }
+      }
+    },
+    "/comments/{id}/report": {
+      "post": {
+        "tags": ["Comments Module"],
+        "summary": "Signaler aux Sages ce post",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string", "example": "Plagiat flagrant" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signalement dirigé vers la file"
+          }
+        }
+      }
+    },
+    "/ratings": {
+      "post": {
+        "tags": ["Ratings Module"],
+        "summary": "Attribuer une note d'or (Étoile/Plume d'or)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["storyId", "rating"],
+                "properties": {
+                  "storyId": { "type": "string" },
+                  "rating": { "type": "integer", "minimum": 1, "maximum": 5, "example": 5 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Éloge d'or consolidé avec succès"
+          }
+        }
+      }
+    },
+    "/ratings/story/{id}": {
+      "get": {
+        "tags": ["Ratings Module"],
+        "summary": "Obtenir les statistiques des éloges",
+        "security": [],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stats rendues"
+          }
+        }
+      }
+    },
+    "/follows/{userId}": {
+      "post": {
+        "tags": ["Follows Module"],
+        "summary": "Devenir l'allié (suivre) cet auteur",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+         "responses": {
+          "200": {
+            "description": "Alliance scellée"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Follows Module"],
+        "summary": "Rompre l'alliance",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rompu"
+          }
+        }
+      }
+    },
+    "/follows/followers": {
+      "get": {
+        "tags": ["Follows Module"],
+        "summary": "Lister vos disciples",
+        "responses": {
+          "200": {
+            "description": "Liste de personnes qui vous suivent"
+          }
+        }
+      }
+    },
+    "/follows/following": {
+      "get": {
+        "tags": ["Follows Module"],
+        "summary": "Membres de votre conseil",
+        "responses": {
+          "200": {
+            "description": "Auteurs suivis"
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": ["Notifications Module"],
+        "summary": "Lister vos missives de communauté",
+        "responses": {
+          "200": {
+            "description": "Index de missives de notifications"
+          }
+        }
+      }
+    },
+    "/notifications/{id}/read": {
+      "patch": {
+        "tags": ["Notifications Module"],
+        "summary": "Prendre acte de cette missive",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lu"
+          }
+        }
+      }
+    },
+     "/notifications/read-all": {
+      "patch": {
+        "tags": ["Notifications Module"],
+        "summary": "Vider et lire la boîte aux lettres",
+        "responses": {
+          "200": {
+            "description": "L'ensemble de la boîte est lue"
+          }
+        }
+      }
+    },
+    "/notifications/{id}": {
+      "delete": {
+        "tags": ["Notifications Module"],
+        "summary": "Déchirer cette missive",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Gagné"
+          }
+        }
+      }
+    },
+    "/universes": {
+      "get": {
+        "tags": ["Universes Module"],
+        "summary": "Lister vos univers cosmiques",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Collection de mondes romanesques"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Universes Module"],
+        "summary": "Établir un cosmos (Univers)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UniverseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cosmos mémorisé"
+          }
+        }
+      }
+    },
+    "/universes/{id}": {
+      "patch": {
+        "tags": ["Universes Module"],
+        "summary": "Faire grandir ce cosmos",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UniverseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fait"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Universes Module"],
+        "summary": "Démolir le cosmos",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimé"
+          }
+        }
+      }
+    },
+    "/universes/{id}/stories": {
+      "get": {
+        "tags": ["Universes Module"],
+        "summary": "Histoires liées à ce cosmos",
+        "security": [],
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Récits"
+          }
+        }
+      }
+    },
+    "/contests": {
+      "get": {
+        "tags": ["Contests Module"],
+        "summary": "Parcourir les joutes littéraires actives (Concours)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Épreuves actives"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Contests Module"],
+        "summary": "Initier un grand concours officiel",
+        "description": "Autorisé uniquement avec la permission `contest.create`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Épreuve déclarée"
+          }
+        }
+      }
+    },
+    "/contests/{id}": {
+      "get": {
+        "tags": ["Contests Module"],
+        "summary": "Consulter les parchemins d'un concours",
+        "security": [],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Règles, prix et statut renvoyés"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Contests Module"],
+        "summary": "Amender un concours actif",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rectifié"
+          }
+        }
+      }
+    },
+    "/contests/{id}/submit": {
+      "post": {
+        "tags": ["Contests Module"],
+        "summary": "Participer en déposant sa chronique",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["storyId"],
+                "properties": {
+                  "storyId": { "type": "string", "example": "story_123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Participation actée!"
+          }
+        }
+      }
+    },
+    "/contests/{id}/submissions": {
+      "get": {
+        "tags": ["Contests Module"],
+        "summary": "Visualiser la liste des manuscrits déposés",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Manuscrits retournés"
+          }
+        }
+      }
+    },
+    "/contests/{id}/close": {
+      "post": {
+        "tags": ["Contests Module"],
+        "summary": "Clôture du concours par le grand jury",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Concours clos"
+          }
+        }
+      }
+    },
+    "/ai/correct": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Polir et orthographier une phrase",
+        "description": "Analyse l'extrait littéraire avec Stilova-AI et remet un texte impeccable. Enregistre les jetons de calcul.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string", "example": "Il marchas ver la foret sacrer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Texte corrigé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/summarize": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Générer un synopsis récapitulatif",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Maquette de résumé livrée"
+          }
+        }
+      }
+    },
+    "/ai/suggest": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Solliciter des scénarios d'écriture",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["contextText"],
+                "properties": {
+                  "contextText": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Voies proposées"
+          }
+        }
+      }
+    },
+    "/ai/characters": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Extraire le Conseil de vos personnages",
+        "description": "Cartographie les tempéraments, généalogies et alliances des personnages du texte.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fiches d'acteurs de l'ouvrage compilées"
+          }
+        }
+      }
+    },
+    "/ai/timeline": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Calculateur d'ères et chronologie historique",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Arbre chronologique linéaire"
+          }
+        }
+      }
+    },
+    "/ai/illustrate": {
+      "post": {
+        "tags": ["AI Copilot Module"],
+        "summary": "Délivrer un prompt pour œuvre figurative",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["prompt"],
+                "properties": {
+                  "prompt": { "type": "string", "example": "Un masque d'Or en haut du palais" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Image générée sous forme d'URI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "imageUrl": { "type": "string", "format": "uri" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/moderation/reports": {
+      "get": {
+        "tags": ["Moderation Module"],
+        "summary": "Relever la pile des récits signalés aux modérateurs",
+        "description": "Requiert le privilège `moderation.*`.",
+        "responses": {
+          "200": {
+            "description": "Doléances de la cité"
+          }
+        }
+      }
+    },
+    "/moderation/reports/{id}": {
+      "get": {
+        "tags": ["Moderation Module"],
+        "summary": "Ouvrir l'acte récapitulatif d'un litige",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Données"
+          }
+        }
+      }
+    },
+    "/moderation/reports/{id}/warn": {
+      "post": {
+        "tags": ["Moderation Module"],
+        "summary": "Publier un rappel de bonnes mœurs littéraires",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                  "message": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Avertissement communiqué"
+          }
+        }
+      }
+    },
+    "/moderation/reports/{id}/hide": {
+      "post": {
+        "tags": ["Moderation Module"],
+        "summary": "Faire disparaître l'ouvrage temporairement d'un coup",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dissimulé de tous regards"
+          }
+        }
+      }
+    },
+    "/moderation/reports/{id}/dismiss": {
+      "post": {
+        "tags": ["Moderation Module"],
+        "summary": "Déclarer le litige résolu et clôturé",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plainte classée sans suite"
+          }
+        }
+      }
+    },
+    "/admin/dashboard": {
+      "get": {
+        "tags": ["Admin Module"],
+        "summary": "Obtenir les indicateurs de santé royale (KPIs, Stripe)",
+        "description": "Affiche le revenu courant, les souscriptions, les fiches utilisateurs et les coûts du module IA.",
+        "responses": {
+          "200": {
+            "description": "Bilan de prospérité globale"
+          }
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": ["Admin Module"],
+        "summary": "Ouvrir le registre des utilisateurs",
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recherche accomplie"
+          }
+        }
+      }
+    },
+    "/admin/users/{id}": {
+      "get": {
+        "tags": ["Admin Module"],
+        "summary": "Renseigner l'historique complet de ce profil",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Données compilées"
+          }
+        }
+      }
+    },
+    "/admin/users/{id}/role": {
+      "patch": {
+        "tags": ["Admin Module"],
+        "summary": "Délivrer ou modifier un rôle dans la cité",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["role"],
+                "properties": {
+                  "role": { "type": "string", "enum": ["READER", "AUTHOR", "MODERATOR", "ADMIN"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rang assigné"
+          }
+        }
+      }
+    },
+    "/admin/users/{id}/suspend": {
+      "patch": {
+        "tags": ["Admin Module"],
+        "summary": "Mettre sous cloche le compte",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Membres temporairement confinés"
+          }
+        }
+      }
+    },
+    "/admin/users/{id}/ban": {
+      "patch": {
+        "tags": ["Admin Module"],
+        "summary": "Bannissement éternel",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+         "responses": {
+          "200": {
+            "description": "Banni de la cité"
+          }
+        }
+      }
+    },
+    "/admin/users/{id}/reactivate": {
+       "patch": {
+        "tags": ["Admin Module"],
+        "summary": "Réhabiliter un citoyen",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Libre d'écrire"
+          }
+        }
+      }
+    },
+    "/admin/stories": {
+      "get": {
+        "tags": ["Admin Module"],
+        "summary": "Inventaire absolu des œuvres de la cité",
+        "responses": {
+          "200": {
+            "description": "Index général"
+          }
+        }
+      }
+    },
+    "/admin/stories/{id}": {
+      "delete": {
+        "tags": ["Admin Module"],
+        "summary": "Déboulonner une histoire des bibliothèques",
+        "description": "Destitution immédiate définitive pour faute éthique suprême.",
+         "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Œuvre décapitée"
+          }
+        }
+      }
+    },
+    "/admin/audit": {
+      "get": {
+        "tags": ["Admin Module"],
+        "summary": "Visualiser le journal d'audit",
+        "description": "Contient les logs immuables des bannissements, modifications de quotas, etc.",
+        "responses": {
+          "200": {
+            "description": "Journal sécurisé transmis"
+          }
+        }
+      }
+    },
+    "/system/health": {
+      "get": {
+        "tags": ["Super Admin Module"],
+        "summary": "Diagnostic vital du moteur d'exécution",
+        "responses": {
+          "200": {
+             "description": "Paramètres vitaux au vert",
+             "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "UP" },
+                    "redis": { "type": "string", "example": "UP" },
+                    "db": { "type": "string", "example": "UP" },
+                    "geminiApi": { "type": "string", "example": "UP" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/config": {
+      "get": {
+        "tags": ["Super Admin Module"],
+        "summary": "Lire les configurations d'injection variables",
+        "responses": {
+          "200": {
+            "description": "Index de secrets"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Super Admin Module"],
+        "summary": "Ajuster les secrets d'architecture",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "timeoutMs": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Actualisé"
+          }
+        }
+      }
+    },
+    "/system/logs": {
+      "get": {
+         "tags": ["Super Admin Module"],
+         "summary": "Extraire les terminologies d'erreurs Docker/Cloud Run",
+         "responses": {
+          "200": {
+            "description": "Fichier de logs"
+          }
+        }
+      }
+    },
+    "/system/quotas": {
+      "get": {
+        "tags": ["Super Admin Module"],
+        "summary": "Lister les quotas d'usage IA",
+        "responses": {
+          "200": {
+             "description": "Usage global d'inférence"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Super Admin Module"],
+        "summary": "Paramétrer les plafonds d'appel de plume-IA",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "maxTokensPerUserDay": { "type": "integer", "example": 500000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nouveaux plafonds d'usage actés"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "RegisterDto": {
+        "type": "object",
+        "required": ["email", "password", "preferredMode", "genres"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8, "description": "Sécurité : 8 caractères minimum, 1 chiffre, 1 majuscule." },
+          "preferredMode": { "type": "string", "enum": ["READER", "AUTHOR", "COW_WRITER"] },
+          "genres": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 3
+          }
+        }
+      },
+      "LoginDto": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string" }
+        }
+      },
+      "UpdateUserDto": {
+        "type": "object",
+        "properties": {
+          "displayName": { "type": "string" },
+          "bio": { "type": "string" },
+          "lang": { "type": "string", "example": "fr" },
+          "country": { "type": "string", "example": "CI" }
+        }
+      },
+      "UpdatePrivacyDto": {
+        "type": "object",
+        "properties": {
+          "showLibrary": { "type": "boolean" },
+          "showFavorites": { "type": "boolean" },
+          "showHistory": { "type": "boolean" }
+        }
+      },
+      "CreateStoryDto": {
+        "type": "object",
+        "required": ["title", "description", "genre"],
+        "properties": {
+          "title": { "type": "string", "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "genre": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "isInteractive": { "type": "boolean" },
+          "language": { "type": "string", "example": "fr" }
+        }
+      },
+      "UpdateStoryDto": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "genre": { "type": "string" },
+          "isInteractive": { "type": "boolean" }
+        }
+      },
+      "CreateChapterDto": {
+        "type": "object",
+        "required": ["storyId", "title", "content"],
+        "properties": {
+          "storyId": { "type": "string" },
+          "title": { "type": "string" },
+          "content": { "type": "string", "description": "Contenu littéraire brut ou document structuré en blocs" },
+          "isRoot": { "type": "boolean" }
+        }
+      },
+      "UpdateChapterDto": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      },
+      "ChoiceDto": {
+        "type": "object",
+        "required": ["sourceChapterId", "destinationChapterId", "text"],
+        "properties": {
+          "sourceChapterId": { "type": "string" },
+          "destinationChapterId": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      },
+      "CreateBookmarkDto": {
+        "type": "object",
+        "required": ["storyId", "chapterId", "scrollPosition"],
+        "properties": {
+          "storyId": { "type": "string" },
+          "chapterId": { "type": "string" },
+          "scrollPosition": { "type": "number" },
+          "noteText": { "type": "string" }
+        }
+      },
+      "CreateCommentDto": {
+        "type": "object",
+        "required": ["storyId", "chapterId", "content"],
+        "properties": {
+          "storyId": { "type": "string" },
+          "chapterId": { "type": "string" },
+          "content": { "type": "string", "maxLength": 500 }
+        }
+      },
+      "UniverseDto": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "cosmosBlueprintUrl": { "type": "string" }
+        }
+      },
+      "ContestDto": {
+        "type": "object",
+        "required": ["title", "description", "reward", "endAt"],
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "reward": { "type": "string", "example": "5 000 000 FCFA" },
+          "endAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SuccessResponseSimple": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Operation completed successfully" }
+        }
+      },
+      "SuccessResponseRegister": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Utilisateur créé avec mention d'honneur" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "example": "user_98e1" },
+              "email": { "type": "string", "example": "griote.nomade@stilova.com" }
+            }
+          }
+        }
+      },
+      "SuccessResponseLogin": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": {
+            "type": "object",
+            "properties": {
+              "accessToken": { "type": "string", "example": "eyJhbGciOiJIUzI1NiIsIn..." },
+              "refreshToken": { "type": "string" },
+              "user": {
+                "type": "object",
+                "properties": {
+                  "uid": { "type": "string" },
+                  "displayName": { "type": "string" },
+                  "role": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "UserProfileResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": {
+            "type": "object",
+            "properties": {
+              "uid": { "type": "string" },
+              "displayName": { "type": "string" },
+              "email": { "type": "string" },
+              "role": { "type": "string", "example": "AUTHOR" },
+              "permissions": {
+                "type": "array",
+                "items": { "type": "string" },
+                "example": ["story.create", "story.publish"]
+              }
+            }
+          }
+        }
+      },
+      "PrivacySettingsResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": {
+            "$ref": "#/components/schemas/UpdatePrivacyDto"
+          }
+        }
+      },
+      "StoriesPaginatedResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "authorName": { "type": "string" },
+                "genre": { "type": "string" }
+              }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "page": { "type": "integer" },
+              "limit": { "type": "integer" },
+              "total": { "type": "integer" },
+              "totalPages": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "SuccessStoryCreated": {
+         "type": "object",
+         "properties": {
+            "success": { "type": "boolean", "example": true },
+            "data": {
+               "type": "object",
+               "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" }
+               }
+            }
+         }
+      },
+      "StoryDetailResponse": {
+         "type": "object",
+         "properties": {
+            "success": { "type": "boolean", "example": true },
+            "data": {
+               "type": "object",
+               "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" },
+                  "description": { "type": "string" },
+                  "chapters": {
+                     "type": "array",
+                     "items": {
+                        "type": "object",
+                        "properties": {
+                           "id": { "type": "string" },
+                           "title": { "type": "string" }
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      },
+      "NarrativeGraph": {
+         "type": "object",
+         "properties": {
+            "storyId": { "type": "string" },
+            "nodes": {
+               "type": "array",
+               "items": {
+                  "type": "object",
+                  "properties": {
+                     "id": { "type": "string" },
+                     "title": { "type": "string" },
+                     "isRoot": { "type": "boolean" }
+                  }
+               }
+            },
+            "edges": {
+               "type": "array",
+               "items": {
+                  "type": "object",
+                  "properties": {
+                     "fromNodeId": { "type": "string" },
+                     "toNodeId": { "type": "string" },
+                     "choiceText": { "type": "string" }
+                  }
+               }
+            }
+         }
+      },
+      "AiResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": {
+            "type": "object",
+            "properties": {
+              "correctedText": { "type": "string", "example": "Il maracha vers la forêt sacrée." },
+              "tokenCost": { "type": "integer", "example": 12 },
+              "remainingQuota": { "type": "integer", "example": 499988 }
+            }
+          }
+        }
+      },
+      "SessionMetaData": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "device": { "type": "string" },
+          "ipAddress": { "type": "string" },
+          "lastActiveAt": { "type": "string" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["success", "message", "error"],
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "message": { "type": "string", "example": "La règle métier a échoué" },
+          "error": {
+            "type": "object",
+            "required": ["code", "details"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "VALIDATION_ERROR",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "BUSINESS_RULE_VIOLATION",
+                  "RATE_LIMIT_EXCEEDED",
+                  "INTERNAL_SERVER_ERROR",
+                  "SERVICE_UNAVAILABLE"
+                ],
+                "example": "VALIDATION_ERROR"
+              },
+              "details": {
+                "type": "array",
+                "items": { "type": "string" },
+                "example": ["Password is missing a special character."]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

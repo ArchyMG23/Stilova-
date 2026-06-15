@@ -1,0 +1,375 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "The user account entity including roles and profile preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique user ID matching the Firebase Auth uid."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full name or pen name."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Primary verified email address."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "reader",
+            "writer",
+            "moderator",
+            "admin"
+          ],
+          "description": "System operational role determining access rights."
+        },
+        "bio": {
+          "type": "string",
+          "description": "Self-provided author or reader biography."
+        },
+        "favoriteGenres": {
+          "type": "array",
+          "description": "List of favorite African genres (e.g. Afrofuturism, Mythology)."
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "URL to the user avatar icon."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Doc creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Doc update timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "role",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "A book/interactive novel published or drafted by an African storyteller.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique auto-generated story document ID."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the literary piece."
+        },
+        "description": {
+          "type": "string",
+          "description": "Swaying back-cover synopsis of the story."
+        },
+        "coverUrl": {
+          "type": "string",
+          "description": "High-fidelity generated cover artwork URL."
+        },
+        "genre": {
+          "type": "string",
+          "enum": [
+            "afrofuturism",
+            "mythology",
+            "romance",
+            "drama",
+            "historical"
+          ],
+          "description": "Primary genre categorizing the story."
+        },
+        "authorId": {
+          "type": "string",
+          "description": "The UID of the writer who created the story."
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Pen name of the author."
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "State of publication (draft vs public)."
+        },
+        "isInteractive": {
+          "type": "boolean",
+          "description": "Whether this is a branch-based interactive book."
+        },
+        "rating": {
+          "type": "number",
+          "description": "Calculated average rating."
+        },
+        "viewsCount": {
+          "type": "integer",
+          "description": "Total reader hits."
+        },
+        "reported": {
+          "type": "boolean",
+          "description": "Whether a reader flagged this story for moderation."
+        },
+        "isFeatured": {
+          "type": "boolean",
+          "description": "Whether curated as top-tier work by Admins."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Time of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Time of last modification."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description",
+        "coverUrl",
+        "genre",
+        "authorId",
+        "authorName",
+        "isPublished",
+        "isInteractive",
+        "rating",
+        "viewsCount",
+        "reported",
+        "isFeatured",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryNode": {
+      "title": "StoryNode",
+      "description": "A node representing a chapter or sequence branch in a story path.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique node ID."
+        },
+        "storyId": {
+          "type": "string",
+          "description": "The ID of the parent story."
+        },
+        "title": {
+          "type": "string",
+          "description": "The subtitle or chapter chapter name."
+        },
+        "content": {
+          "type": "string",
+          "description": "Rich text narrative content for this scene."
+        },
+        "isRoot": {
+          "type": "boolean",
+          "description": "True if this is the start of the book."
+        },
+        "choices": {
+          "type": "array",
+          "description": "List of routes the reader can select (objects with text and nextNodeId)."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Doc created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Doc updated."
+        }
+      },
+      "required": [
+        "id",
+        "storyId",
+        "title",
+        "content",
+        "isRoot",
+        "choices",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Competition": {
+      "title": "Competition",
+      "description": "A theme-focused pan-African literary battle (concours de stylets).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique competition ID."
+        },
+        "title": {
+          "type": "string",
+          "description": "Heading of the challenge (e.g. Afrofuturism 2026)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Contest criteria and creative prompt descriptions."
+        },
+        "theme": {
+          "type": "string",
+          "description": "Substantive theme of the submissions."
+        },
+        "deadline": {
+          "type": "string",
+          "description": "Closing date for entering literature."
+        },
+        "prizeAmount": {
+          "type": "string",
+          "description": "Prizes for the winners."
+        },
+        "submissionsCount": {
+          "type": "integer",
+          "description": "Total stories entered."
+        },
+        "isOpen": {
+          "type": "boolean",
+          "description": "Whether submissions are actively being accepted."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Time of creative launch."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description",
+        "theme",
+        "deadline",
+        "prizeAmount",
+        "submissionsCount",
+        "isOpen",
+        "createdAt"
+      ]
+    },
+    "Submission": {
+      "title": "Submission",
+      "description": "A story submitted to a literary competition.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Submission ID (can match the Story ID)."
+        },
+        "competitionId": {
+          "type": "string",
+          "description": "The associated Competition ID."
+        },
+        "storyId": {
+          "type": "string",
+          "description": "The ID of the literary story."
+        },
+        "storyTitle": {
+          "type": "string",
+          "description": "Cache of the story title."
+        },
+        "authorId": {
+          "type": "string",
+          "description": "The storyteller's UID."
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Cache of author's name."
+        },
+        "votesCount": {
+          "type": "integer",
+          "description": "Total public votes received."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected"
+          ],
+          "description": "审查/Moderation status."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Entry time."
+        }
+      },
+      "required": [
+        "id",
+        "competitionId",
+        "storyId",
+        "storyTitle",
+        "authorId",
+        "authorName",
+        "votesCount",
+        "status",
+        "createdAt"
+      ]
+    },
+    "Vote": {
+      "title": "Vote",
+      "description": "A single community vote cast for a competition submission.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique voting ID in details."
+        },
+        "userId": {
+          "type": "string",
+          "description": "The voter's User UID."
+        },
+        "competitionId": {
+          "type": "string",
+          "description": "The specific Competition ID."
+        },
+        "submissionId": {
+          "type": "string",
+          "description": "The associated Submission ID."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when vote was cast."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "competitionId",
+        "submissionId",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Platform users profiles and settings."
+    },
+    "stories/{storyId}": {
+      "schema": "Story",
+      "description": "Active stories written by creators."
+    },
+    "stories/{storyId}/nodes/{nodeId}": {
+      "schema": "StoryNode",
+      "description": "Chapters or interactive points for reading branch trees."
+    },
+    "competitions/{competitionId}": {
+      "schema": "Competition",
+      "description": "Active literary challenges and contests."
+    },
+    "competitions/{competitionId}/submissions/{submissionId}": {
+      "schema": "Submission",
+      "description": "Official reading entries drafted into contests."
+    },
+    "competitions/{competitionId}/submissions/{submissionId}/votes/{voteId}": {
+      "schema": "Vote",
+      "description": "Cast community votes for entries."
+    }
+  }
+}

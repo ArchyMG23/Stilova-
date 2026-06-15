@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,300..700;1,300..700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Poppins:ital,wght@0,100..900;1,100..900&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300..900;1,300..900&family=Cinzel:wght@400..900&family=Marcellus&family=UnifrakturCook:wght@700&family=Alegreya+SC:ital,wght@0,400..900;1,400..900&family=Dancing+Script:wght@400..700&family=Great+Vibes&family=Parisienne&family=Allura&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, ui-serif, serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, monospace;
+  
+  /* Artistic Flair Slate Theme overrides */
+  --color-slate-950: #0B0C0E;
+  --color-slate-900: #0F1117;
+  --color-slate-850: #111318;
+  --color-slate-800: #1A1C21;
+  --color-slate-750: #2A2B32;
+  --color-amber-500: #D97706;
+  --color-amber-400: #F59E0B;
+  --color-amber-550: #D97706;
+  --color-slate-100: #E0E0E0;
+  --color-slate-200: #EFEFEF;
+  --color-slate-300: #D1D5DB;
+  --color-slate-400: #A3A3A3;
+  --color-slate-500: #6B7280;
+  
+  /* Additional custom aesthetic values */
+  --shadow-artistic: 0px 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0C0E;
+}
+::-webkit-scrollbar-thumb {
+  background: #2A2B32;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #D97706;
+}

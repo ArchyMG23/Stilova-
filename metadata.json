@@ -1,0 +1,8 @@
+{
+  "name": "Stilova",
+  "description": "Le stylet qui grave ton histoire. Une plateforme panafricaine de lecture et d'écriture immersive avec narrations audio IA intégrées et musique d'ambiance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

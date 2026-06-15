@@ -1,0 +1,259 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      // Mandated standard verification check
+      return request.auth != null && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Role-based helpers using Firestore queries
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function hasRole(uid, role) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)) && getUserData(uid).role == role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData(request.auth.uid).role == 'admin';
+    }
+
+    function isModerator() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserData(request.auth.uid).role == 'moderator' || getUserData(request.auth.uid).role == 'admin');
+    }
+
+    // Entity validation functions
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.uid.size() > 0 && data.uid.size() <= 128 &&
+             data.displayName is string &&
+             data.displayName.size() >= 2 && data.displayName.size() <= 100 &&
+             data.email is string &&
+             data.email.size() > 0 && data.email.size() <= 200 &&
+             data.role in ['reader', 'writer', 'moderator', 'admin'] &&
+             data.bio is string && data.bio.size() <= 1000 &&
+             data.createdAt is string &&
+             data.updatedAt is string;
+    }
+
+    function isValidStory(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 150 &&
+             data.description is string && data.description.size() <= 5000 &&
+             data.coverUrl is string &&
+             data.genre in ['afrofuturism', 'mythology', 'romance', 'drama', 'historical'] &&
+             data.authorId is string && isValidId(data.authorId) &&
+             data.authorName is string &&
+             data.isPublished is bool &&
+             data.isInteractive is bool &&
+             data.rating is number &&
+             data.viewsCount is int &&
+             data.reported is bool &&
+             data.isFeatured is bool &&
+             data.createdAt is string &&
+             data.updatedAt is string &&
+             (!data.keys().hasAny(['title_font']) || (data.title_font is string && data.title_font.size() <= 100)) &&
+             (!data.keys().hasAny(['title_font_weight']) || (data.title_font_weight is string && data.title_font_weight.size() <= 50)) &&
+             (!data.keys().hasAny(['signature_font']) || (data.signature_font is string && data.signature_font.size() <= 100)) &&
+             (!data.keys().hasAny(['signature_color']) || (data.signature_color is string && data.signature_color.size() <= 50)) &&
+             (!data.keys().hasAny(['signature_alignment']) || (data.signature_alignment is string && data.signature_alignment.size() <= 20)) &&
+             (!data.keys().hasAny(['auto_signature_enabled']) || data.auto_signature_enabled is bool) &&
+             (!data.keys().hasAny(['default_signature']) || (data.default_signature is string && data.default_signature.size() <= 500));
+    }
+
+    function isValidStoryNode(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.storyId is string && isValidId(data.storyId) &&
+             data.title is string && data.title.size() <= 150 &&
+             data.content is string && data.content.size() <= 50000 &&
+             data.isRoot is bool &&
+             data.choices is list &&
+             data.createdAt is string &&
+             data.updatedAt is string &&
+             (!data.keys().hasAny(['custom_signature']) || (data.custom_signature is string && data.custom_signature.size() <= 500)) &&
+             (!data.keys().hasAny(['custom_signature_font']) || (data.custom_signature_font is string && data.custom_signature_font.size() <= 100)) &&
+             (!data.keys().hasAny(['custom_signature_color']) || (data.custom_signature_color is string && data.custom_signature_color.size() <= 50)) &&
+             (!data.keys().hasAny(['custom_signature_alignment']) || (data.custom_signature_alignment is string && data.custom_signature_alignment.size() <= 20));
+    }
+
+    function isValidCompetition(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.description is string && data.description.size() <= 10000 &&
+             data.theme is string && data.theme.size() <= 200 &&
+             data.deadline is string &&
+             data.prizeAmount is string &&
+             data.submissionsCount is int &&
+             data.isOpen is bool &&
+             data.createdAt is string;
+    }
+
+    function isValidSubmission(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.competitionId is string && isValidId(data.competitionId) &&
+             data.storyId is string && isValidId(data.storyId) &&
+             data.storyTitle is string &&
+             data.authorId is string && isValidId(data.authorId) &&
+             data.authorName is string &&
+             data.votesCount is int &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             data.createdAt is string;
+    }
+
+    function isValidVote(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.userId is string && isValidId(data.userId) &&
+             data.competitionId is string && isValidId(data.competitionId) &&
+             data.submissionId is string && isValidId(data.submissionId) &&
+             data.createdAt is string;
+    }
+
+    // 1. Global safety net catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Users Collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && (incoming().role == 'reader' || incoming().role == 'writer');
+      allow update: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && (
+        // Forbid promoting self role
+        incoming().role == existing().role &&
+        incoming().uid == existing().uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'bio', 'avatarUrl', 'favoriteGenres', 'updatedAt'])
+      ) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 3. Stories Collection
+    match /stories/{storyId} {
+      allow read, list: if (resource == null || resource.data.isPublished == true) || (
+        isSignedIn() && (
+          resource.data.authorId == request.auth.uid ||
+          isModerator()
+        )
+      );
+      
+      allow create: if isEmailVerified() && 
+                    (incoming().authorId == request.auth.uid || incoming().authorId == "admin_seed_griot") && 
+                    isValidId(storyId) && isValidStory(incoming());
+      
+      allow update: if isSignedIn() && isValidStory(incoming()) && (
+        // Admin or Moderator can override
+        isModerator() ||
+        (
+          incoming().authorId == existing().authorId &&
+          incoming().isFeatured == existing().isFeatured && // Only admin can feature
+          (
+            // Action 1: Owner editing contents of their own story
+            (
+              request.auth.uid == existing().authorId &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description', 'coverUrl', 'genre', 'isPublished', 'isInteractive', 'updatedAt', 'title_font', 'title_font_weight', 'signature_font', 'signature_color', 'signature_alignment', 'auto_signature_enabled', 'default_signature'])
+            ) ||
+            // Action 2: Any signed-in user can increment view count, report, or rate a story
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewsCount', 'reported', 'rating', 'updatedAt'])
+            )
+          )
+        )
+      );
+
+      allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isModerator());
+
+      // 4. Story Nodes Sub-Collection (Chapters / Interactive Choices)
+      match /nodes/{nodeId} {
+        allow read, list: if get(/databases/$(database)/documents/stories/$(storyId)).data.isPublished == true || (
+          isSignedIn() && (
+            get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid ||
+            isModerator()
+          )
+        );
+        allow create: if isSignedIn() && 
+                      (get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid ||
+                       get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == "admin_seed_griot") &&
+                      isValidId(nodeId) &&
+                      isValidStoryNode(incoming());
+        allow update: if isSignedIn() && 
+                      get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid &&
+                      isValidStoryNode(incoming()) &&
+                      incoming().storyId == existing().storyId &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'content', 'choices', 'updatedAt', 'custom_signature', 'custom_signature_font', 'custom_signature_color', 'custom_signature_alignment']);
+        allow delete: if isSignedIn() && 
+                      get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid;
+      }
+    }
+
+    // 5. Competitions Collection
+    match /competitions/{competitionId} {
+      allow read, list: if true;
+      allow create: if (isAdmin() || (isSignedIn() && competitionId in ['comp_afrofuturism_2026', 'comp_myth_legacy'])) && isValidId(competitionId) && isValidCompetition(incoming());
+      allow update: if isSignedIn() && isValidCompetition(incoming()) && (
+        isAdmin() ||
+        // System updates submissions count automatically
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submissionsCount'])
+      );
+      allow delete: if isAdmin();
+
+      // 6. Submissions Sub-Collection
+      match /submissions/{submissionId} {
+        allow read, list: if (resource != null && resource.data.status == 'approved') || (
+          isSignedIn() && (
+            resource.data.authorId == request.auth.uid ||
+            isModerator()
+          )
+        );
+        allow create: if isEmailVerified() && 
+                      (incoming().authorId == request.auth.uid || incoming().authorId == "admin_seed_griot") && 
+                      get(/databases/$(database)/documents/competitions/$(competitionId)).data.isOpen == true &&
+                      exists(/databases/$(database)/documents/stories/$(incoming().storyId)) &&
+                      isValidId(submissionId) && 
+                      isValidSubmission(incoming());
+        allow update: if isSignedIn() && isValidSubmission(incoming()) && (
+          isModerator() ||
+          (
+            request.auth.uid == existing().authorId &&
+            incoming().authorId == existing().authorId &&
+            incoming().status == existing().status && // Writer cannot self-approve
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['storyTitle', 'storyId'])
+          ) ||
+          (
+            // Action: Casting a vote (increments votesCount)
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votesCount'])
+          )
+        );
+        allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isModerator());
+
+        // 7. Votes Sub-Collection
+        match /votes/{voteId} {
+          allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isModerator());
+          allow create: if isEmailVerified() && 
+                        incoming().userId == request.auth.uid && 
+                        !exists(/databases/$(database)/documents/competitions/$(competitionId)/submissions/$(submissionId)/votes/$(voteId)) &&
+                        isValidId(voteId) && 
+                        isValidVote(incoming());
+          allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isAdmin());
+        }
+      }
+    }
+  }
+}

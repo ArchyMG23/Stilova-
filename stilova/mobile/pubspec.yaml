@@ -1,0 +1,73 @@
+name: stilova_mobile
+description: "Immersive Panafrican Reading & Interactive Writing Client Application."
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Cupertino Design Icons
+  cupertino_icons: ^1.0.6
+
+  # State Management Unifié
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Routage Applicatif Réactif
+  go_router: ^13.0.1
+
+  # Client Protocoles HTTP & Réseau
+  dio: ^5.4.0
+
+  # Persistance & Cache Local (SQLite)
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.18
+
+  # Notifications Push d'Engagement
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
+
+  # Polices et Animations
+  google_fonts: ^6.1.0
+  flutter_animate: ^4.5.0
+
+  # Annotations de Modélisation sémantique
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.8.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Code Generators
+  build_runner: ^2.4.8
+  drift_dev: ^2.14.1
+  freezed: ^2.4.6
+  json_serializable: ^6.7.1
+  riverpod_generator: ^2.3.9
+
+flutter:
+  uses-material-design: true
+
+  # Asset Bundling Configuration
+  assets:
+    - assets/images/
+    - assets/icons/
+
+  # Elegant Typographies Pairing
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+    - family: Georgia
+      fonts:
+        - asset: assets/fonts/Georgia-Regular.ttf
+        - asset: assets/fonts/Georgia-Bold.ttf
+          weight: 700

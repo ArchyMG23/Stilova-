@@ -1,0 +1,2169 @@
+import React, { useState, useEffect } from "react";
+import { UserProfile, Story, StoryNode, UserRole, AfricanGenre } from "./types";
+import { auth, dbService, bootstrapLocalData, seedCloudFirestore } from "./firebase";
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import { 
+  TITLE_FONTS, 
+  SIGNATURE_FONTS, 
+  STILOVA_COLORS, 
+  SIGNATURE_ALIGNMENTS, 
+  SIGNATURE_SIZE_OPTIONS,
+  SIGNATURE_ICONS,
+  getFontCssValue,
+  getColorHex
+} from "./lib/typography";
+
+import LibraryView from "./components/LibraryView";
+import ReaderView from "./components/ReaderView";
+import ContestsView from "./components/ContestsView";
+import AdminPanel from "./components/AdminPanel";
+import StoryDetailView from "./components/StoryDetailView";
+
+import { 
+  Trophy, BookOpen, PenTool, ShieldAlert, LogOut, User, Sparkles, 
+  RefreshCw, Plus, Edit2, Play, Check, AlertCircle, Heart, Trash2, 
+  HelpCircle, Star, Eye, Compass, Flame, ShieldCheck, ArrowRight, CornerDownRight, Zap,
+  Sliders, Type, Palette
+} from "lucide-react";
+
+// AVATAR PRESETS list for immersive onboarding 
+const AVATAR_PRESETS = [
+  { name: "Plume d'Or", url: "https://api.dicebear.com/7.x/bottts/svg?seed=gold" },
+  { name: "Hackeuse de Gorée", url: "https://api.dicebear.com/7.x/bottts/svg?seed=goree" },
+  { name: "Gardien d'Ifé", url: "https://api.dicebear.com/7.x/bottts/svg?seed=ife" },
+  { name: "Princesse Astrale", url: "https://api.dicebear.com/7.x/bottts/svg?seed=astral" }
+];
+
+// PUBLIC AUTHOR PROFILES
+const PUBLIC_AUTHORS = [
+  {
+    uid: "author_yasmine",
+    name: "Yasmine Diagne",
+    avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=gold",
+    bio: "Pionnière de l'Afrofuturisme sahélien au Sénégal. Ses récits explorent les connexions quantiques à travers le fleuve Sénégal.",
+    storiesWritten: ["Sentinelles de Gorée-2099", "Dakar 2146"],
+    followers: 1240,
+    location: "Dakar, Sénégal"
+  },
+  {
+    uid: "author_ousmane",
+    name: "Ousmane Sow",
+    avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=ife",
+    bio: "Traditionnaliste passionné des masques Yoruba et des mythologies du Niger. Tisse d'élégants ponts poétiques.",
+    storiesWritten: ["Le Stylet Sacré d'Ifé"],
+    followers: 980,
+    location: "Abidjan, Côte d'Ivoire"
+  },
+  {
+    uid: "author_aminata",
+    name: "Aminata Diallo",
+    avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=astral",
+    bio: "Explore les archives secrètes de l'Empire du Mali et ressuscite l'écriture n'ko sous forme de fictions à choix.",
+    storiesWritten: ["L'Or noir de Tombouctou"],
+    followers: 1850,
+    location: "Bamako, Mali"
+  }
+];
+
+export default function App() {
+  // Authentication states
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [signupRole, setSignupRole] = useState<UserRole>("reader");
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0].url);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // New Immersive Unified Route System:
+  // "landing" | "discover" | "contests" | "profiles" | "login" | "register" | "atelier" | "mods" | "story-detail"
+  const [route, setRoute] = useState<string>("landing");
+  
+  // Library datasets
+  const [stories, setStories] = useState<Story[]>([]);
+  const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
+
+  // Protected action login modal guard
+  const [isProtectedModalOpen, setIsProtectedModalOpen] = useState(false);
+
+  // Writer Workspace (Atelier) States
+  const [myStories, setMyStories] = useState<Story[]>([]);
+  const [writingStory, setWritingStory] = useState<Story | null>(null);
+  const [activeNodes, setActiveNodes] = useState<StoryNode[]>([]);
+  const [editingNode, setEditingNode] = useState<StoryNode | null>(null);
+
+  // New book creation forms modal toggle
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newGenre, setNewGenre] = useState<AfricanGenre>("afrofuturism");
+  const [newCover, setNewCover] = useState("");
+  const [newIsInteractive, setNewIsInteractive] = useState(true);
+
+  // New chapter node forms
+  const [newNodeTitle, setNewNodeTitle] = useState("");
+  const [newNodeContent, setNewNodeContent] = useState("");
+  const [isRootNode, setIsRootNode] = useState(false);
+  const [nodeChoiceText, setNodeChoiceText] = useState("");
+  const [nodeChoiceDestination, setNodeChoiceDestination] = useState("");
+
+  const [savingNode, setSavingNode] = useState(false);
+
+  // Typography Customization Board States
+  const [editorSubTab, setEditorSubTab] = useState<"content" | "typography">("content");
+  
+  // Font parameters for selected story
+  const [storyTitleFont, setStoryTitleFont] = useState("Cormorant Garamond");
+  const [storyTitleFontWeight, setStoryTitleFontWeight] = useState("normal");
+  const [storySignatureFont, setStorySignatureFont] = useState("Great Vibes");
+  const [storySignatureColor, setStorySignatureColor] = useState("amber-500");
+  const [storySignatureAlign, setStorySignatureAlign] = useState("right");
+  const [storyAutoSignatureEnabled, setStoryAutoSignatureEnabled] = useState(false);
+  const [storyDefaultSignature, setStoryDefaultSignature] = useState("Merci d'avoir voyagé avec moi.");
+  
+  // Custom font overrides for selected chapter (node)
+  const [chapterSignatureEnabled, setChapterSignatureEnabled] = useState(false);
+  const [chapterSignatureText, setChapterSignatureText] = useState("");
+  const [chapterSignatureFont, setChapterSignatureFont] = useState("Great Vibes");
+  const [chapterSignatureColor, setChapterSignatureColor] = useState("amber-500");
+  const [chapterSignatureAlign, setChapterSignatureAlign] = useState("right");
+  const [hasPreviewedTypo, setHasPreviewedTypo] = useState(false);
+
+  // Bootstrap cache system and listen to Auth states
+  useEffect(() => {
+    // 1. Launch offline initial records
+    bootstrapLocalData();
+    
+    // 2. Refresh main catalog
+    refreshStoryCatalog();
+
+    // 3. Monitor Firebase session signature
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setAuthLoading(true);
+      try {
+        if (user) {
+          // Attempt cloud sync if online
+          try {
+            await seedCloudFirestore();
+          } catch (seedError) {
+            console.warn("[Stilova Startup] Firestore seeding deferred/offline:", seedError);
+          }
+
+          let profile = null;
+          try {
+            profile = await dbService.getProfile(user.uid);
+            if (profile && user.email) {
+              const emailLower = user.email.toLowerCase();
+              if (emailLower === "yombivictor@gmail.com" || emailLower === "gabrielyombi311@gmail.com" || emailLower.includes("yombi")) {
+                if (profile.role !== "admin") {
+                  profile.role = "admin";
+                  await dbService.saveProfile(profile);
+                }
+              }
+            }
+          } catch (profileError) {
+            console.warn("[Stilova Startup] Profile loading from cloud failed, fallback active:", profileError);
+          }
+
+          if (!profile) {
+            // If profile is absent, build default profile
+            const emailLower = (user.email || "").toLowerCase();
+            const isAdmin = emailLower === "yombivictor@gmail.com" || emailLower === "gabrielyombi311@gmail.com" || emailLower.includes("yombi");
+            profile = {
+              uid: user.uid,
+              displayName: user.displayName || displayName || "Auteur Nouveau",
+              email: user.email || "",
+              role: isAdmin ? "admin" : signupRole,
+              bio: "Auteur en herbe explorant la bibliothèque sacrée.",
+              favoriteGenres: ["afrofuturism"],
+              avatarUrl: selectedAvatar,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+  };
+            try {
+              await dbService.saveProfile(profile);
+            } catch (saveError) {
+              console.warn("[Stilova Startup] Cloud profile preservation skipped:", saveError);
+            }
+          }
+          setCurrentUser(profile);
+          setIsProtectedModalOpen(false);
+          // Redirect to catalog on login / signup
+          setRoute("discover");
+        } else {
+          setCurrentUser(null);
+        }
+      } catch (authError) {
+        console.error("[Stilova Startup] Authentication handling error:", authError);
+      } finally {
+        setAuthLoading(false);
+      }
+    });
+
+    return unsub;
+  }, []);
+
+  const refreshStoryCatalog = async () => {
+    const list = await dbService.listStories();
+    setStories(list);
+    
+    // If user is connected, filter their individual written stories
+    if (auth.currentUser) {
+      setMyStories(list.filter(s => s.authorId === auth.currentUser?.uid));
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      setMyStories(stories.filter(s => s.authorId === currentUser.uid));
+    }
+  }, [stories, currentUser]);
+
+  // Handle registration & logins
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (!email || !password) return;
+
+    try {
+      if (isSigningUp) {
+        // Sign Up Flow
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        // Login Flow
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (e: any) {
+      setAuthError(e.message || "L'authentification a échouée.");
+    }
+  };
+
+  const handleDemoBypass = () => {
+    const demoProfile: UserProfile = {
+      uid: "offline_demo_user",
+      displayName: displayName || "Archy",
+      email: email || "yombivictor@gmail.com",
+      role: "admin",
+      bio: "Mode d'urgence local activé suite à une erreur Firebase Auth.",
+      favoriteGenres: ["afrofuturism"],
+      avatarUrl: selectedAvatar,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Save to local cached list
+    try {
+      const usersList = JSON.parse(localStorage.getItem("stilova_cache_users_profiles") || "[]");
+      const idx = usersList.findIndex((u: any) => u.uid === demoProfile.uid);
+      if (idx > -1) usersList[idx] = demoProfile;
+      else usersList.push(demoProfile);
+      localStorage.setItem("stilova_cache_users_profiles", JSON.stringify(usersList));
+    } catch (localStorageErr) {
+      console.warn("Could not save fallback user to cache:", localStorageErr);
+    }
+
+    setCurrentUser(demoProfile);
+    setRoute("discover");
+    setAuthError(null);
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setCurrentUser(null);
+    setActiveStoryId(null);
+    setSelectedWorkId(null);
+    setWritingStory(null);
+    setEditingNode(null);
+    setRoute("landing");
+  };
+
+  const handleOpenStoryReaderFromDetail = () => {
+    if (selectedWorkId) {
+      setActiveStoryId(selectedWorkId);
+      // Increment views count in catalog
+      const match = stories.find(s => s.id === selectedWorkId);
+      if (match) {
+        const up = { ...match, viewsCount: match.viewsCount + 1 };
+        dbService.saveStory(up).then(() => refreshStoryCatalog()).catch(() => {});
+      }
+      setRoute("reader");
+    }
+  };
+
+  const handleOpenStoryReader = async (storyId: string) => {
+    // Open detailed profile sheet first!
+    setSelectedWorkId(storyId);
+    setRoute("story-detail");
+  };
+
+  const handleProtectedActionTrigger = () => {
+    setIsProtectedModalOpen(true);
+  };
+
+  // Create new book story record in database
+  const handleCreateBook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !newTitle) return;
+
+    try {
+      const randomCover = newCover || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300";
+      const bookId = `story_${Date.now()}`;
+      
+      const newBook: Story = {
+        id: bookId,
+        title: newTitle,
+        description: newDesc,
+        coverUrl: randomCover,
+        genre: newGenre,
+        authorId: currentUser.uid,
+        authorName: currentUser.displayName,
+        isPublished: false,
+        isInteractive: newIsInteractive,
+        rating: 5.0,
+        viewsCount: 0,
+        reported: false,
+        isFeatured: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await dbService.saveStory(newBook);
+      
+      // Auto-create a stub first chapter root node for the interactive story
+      const firstChapterNode: StoryNode = {
+        id: `node_root_${Date.now()}`,
+        storyId: bookId,
+        title: "Introduction",
+        content: "Commencez à graver l'introduction de votre récit ici...",
+        isRoot: true,
+        choices: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await dbService.saveStoryNode(firstChapterNode);
+
+      // Reset Form fields
+      setNewTitle("");
+      setNewDesc("");
+      setNewCover("");
+      setIsCreateModalOpen(false);
+      
+      await refreshStoryCatalog();
+      // Auto focus writing to this story
+      handleFocusStoryAtelier(newBook);
+    } catch (err) {
+      console.error("Book creation failed", err);
+    }
+  };
+
+  // Launch writing board for a specific story
+  const handleFocusStoryAtelier = async (story: Story) => {
+    setWritingStory(story);
+    setEditorSubTab("content");
+    
+    // Init Story typography states
+    setStoryTitleFont(story.title_font || "Cormorant Garamond");
+    setStoryTitleFontWeight(story.title_font_weight || "normal");
+    setStorySignatureFont(story.signature_font || "Great Vibes");
+    setStorySignatureColor(story.signature_color || "amber-500");
+    setStorySignatureAlign(story.signature_alignment || "right");
+    setStoryAutoSignatureEnabled(!!story.auto_signature_enabled);
+    setStoryDefaultSignature(story.default_signature || `Merci d'avoir lu ce chapitre.\n— ${story.authorName}`);
+
+    const nodesList = await dbService.listStoryNodes(story.id);
+    setActiveNodes(nodesList);
+
+    const root = nodesList.find(n => n.isRoot) || nodesList[0] || null;
+    setEditingNode(root);
+
+    if (root) {
+      setNewNodeTitle(root.title);
+      setNewNodeContent(root.content);
+      setIsRootNode(root.isRoot);
+      
+      // Init Node signature states
+      setChapterSignatureText(root.custom_signature || "");
+      setChapterSignatureEnabled(!!root.custom_signature);
+      setChapterSignatureFont(root.custom_signature_font || "Great Vibes");
+      setChapterSignatureColor(root.custom_signature_color || "amber-500");
+      setChapterSignatureAlign(root.custom_signature_alignment || "right");
+    } else {
+      setChapterSignatureText("");
+      setChapterSignatureEnabled(false);
+      setChapterSignatureFont("Great Vibes");
+      setChapterSignatureColor("amber-500");
+      setChapterSignatureAlign("right");
+    }
+  };
+
+  const handleCreateNewNodePlaceholder = () => {
+    const nodeId = `node_${Date.now()}`;
+    const freshNode: StoryNode = {
+      id: nodeId,
+      storyId: writingStory!.id,
+      title: "Nouveau Chapitre",
+      content: "Insérez le fil de votre récit...",
+      isRoot: activeNodes.length === 0,
+      choices: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setActiveNodes(prev => [...prev, freshNode]);
+    setEditingNode(freshNode);
+    setNewNodeTitle(freshNode.title);
+    setNewNodeContent(freshNode.content);
+    setIsRootNode(freshNode.isRoot);
+    
+    setChapterSignatureText("");
+    setChapterSignatureEnabled(false);
+    setChapterSignatureFont("Great Vibes");
+    setChapterSignatureColor("amber-500");
+    setChapterSignatureAlign("right");
+  };
+
+  const handleSelectNodeToEdit = (node: StoryNode) => {
+    setEditingNode(node);
+    setNewNodeTitle(node.title);
+    setNewNodeContent(node.content);
+    setIsRootNode(node.isRoot);
+    
+    // Init Node signature states
+    setChapterSignatureText(node.custom_signature || "");
+    setChapterSignatureEnabled(!!node.custom_signature);
+    setChapterSignatureFont(node.custom_signature_font || "Great Vibes");
+    setChapterSignatureColor(node.custom_signature_color || "amber-500");
+    setChapterSignatureAlign(node.custom_signature_alignment || "right");
+  };
+
+  // Save changes to current node
+  const handleSaveNodeChanges = async () => {
+    if (!writingStory || !editingNode) return;
+    setSavingNode(true);
+
+    try {
+      const updatedNode: StoryNode = {
+        ...editingNode,
+        title: newNodeTitle,
+        content: newNodeContent,
+        isRoot: isRootNode,
+        custom_signature: chapterSignatureEnabled ? chapterSignatureText : "",
+        custom_signature_font: chapterSignatureEnabled ? chapterSignatureFont : "",
+        custom_signature_color: chapterSignatureEnabled ? chapterSignatureColor : "",
+        custom_signature_alignment: chapterSignatureEnabled ? chapterSignatureAlign : "",
+        updatedAt: new Date().toISOString()
+      };
+
+      await dbService.saveStoryNode(updatedNode);
+      
+      // Update local array
+      setActiveNodes(prev => prev.map(n => n.id === updatedNode.id ? updatedNode : n));
+      setEditingNode(updatedNode);
+      alert("Votre chapitre Stylus a été sauvegardé avec succès.");
+    } catch (e) {
+      console.error(e);
+      alert("Erreur de sauvegarde de l'embranchement.");
+    } finally {
+      setSavingNode(false);
+    }
+  };
+
+  const handleSaveStoryTypography = async () => {
+    if (!writingStory) return;
+    setSavingNode(true);
+    try {
+      const updatedStory: Story = {
+        ...writingStory,
+        title_font: storyTitleFont,
+        title_font_weight: storyTitleFontWeight,
+        signature_font: storySignatureFont,
+        signature_color: storySignatureColor,
+        signature_alignment: storySignatureAlign,
+        auto_signature_enabled: storyAutoSignatureEnabled,
+        default_signature: storyDefaultSignature,
+        updatedAt: new Date().toISOString()
+      };
+
+      await dbService.saveStory(updatedStory);
+      setWritingStory(updatedStory);
+      
+      // Update local catalogs
+      setMyStories(prev => prev.map(s => s.id === updatedStory.id ? updatedStory : s));
+      await refreshStoryCatalog();
+      setHasPreviewedTypo(true);
+      alert("🖋️ L'identité typographique et la signature de votre œuvre ont été gravées avec succès !");
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de la sauvegarde de la typographie.");
+    } finally {
+      setSavingNode(false);
+    }
+  };
+
+  const handlePublishToggleStory = async () => {
+    if (!writingStory) return;
+    
+    // Check if the story is being published (draft -> published)
+    if (!writingStory.isPublished) {
+      if (!hasPreviewedTypo) {
+        const confirmPublish = window.confirm(
+          "⚠️ Point 7 de la Charte d'Artiste Stilova : La prévisualisation obligatoire de votre identité typographique est requise avant la publication officielle.\n\nSouhaitez-vous déclarer avoir vérifié l'identité typographique de votre œuvre pour le confort des lecteurs ?"
+        );
+        if (!confirmPublish) {
+          setEditorSubTab("typography");
+          alert("Veuillez accorder un instant à la personnalisation typographique dans l'onglet dédié.");
+          return;
+        }
+        setHasPreviewedTypo(true);
+      }
+    }
+
+    try {
+      const up = { ...writingStory, isPublished: !writingStory.isPublished };
+      await dbService.saveStory(up);
+      setWritingStory(up);
+      setMyStories(prev => prev.map(s => s.id === up.id ? up : s));
+      await refreshStoryCatalog();
+      alert(up.isPublished ? "🎉 Votre œuvre est désormais gravée sur la place publique de Stilova !" : "📁 Votre œuvre a été retirée de la place publique.");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddChoice = () => {
+    if (!editingNode || !nodeChoiceText || !nodeChoiceDestination) {
+      alert("Veuillez saisir le libellé du choix ET sélectionner la destination.");
+      return;
+    }
+
+    const updatedChoices = [...(editingNode.choices || []), { 
+      text: nodeChoiceText, 
+      nextNodeId: nodeChoiceDestination 
+    }];
+
+    const nodeCopy = { ...editingNode, choices: updatedChoices };
+    setEditingNode(nodeCopy);
+    setActiveNodes(prev => prev.map(n => n.id === nodeCopy.id ? nodeCopy : n));
+
+    // Clear pickers
+    setNodeChoiceText("");
+    setNodeChoiceDestination("");
+  };
+
+  const handleRemoveChoice = (idx: number) => {
+    if (!editingNode) return;
+    const filtered = (editingNode.choices || []).filter((_, i) => i !== idx);
+    const nodeCopy = { ...editingNode, choices: filtered };
+    setEditingNode(nodeCopy);
+    setActiveNodes(prev => prev.map(n => n.id === nodeCopy.id ? nodeCopy : n));
+  };
+
+  const handleDeleteStory = async (storyId: string) => {
+    if (confirm("Supprimer l'œuvre de la bibliothèque ?")) {
+      await dbService.deleteStory(storyId);
+      setWritingStory(null);
+      setEditingNode(null);
+      refreshStoryCatalog();
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0B0C0E] flex flex-col items-center justify-center gap-4 text-slate-100">
+        <RefreshCw className="w-10 h-10 text-amber-500 animate-spin" />
+        <span className="font-sans text-xs font-semibold tracking-widest text-amber-500 uppercase">Booring local engines...</span>
+      </div>
+    );
+  }
+
+  // Find active detailed story from selection
+  const activeDetailedStory = stories.find(s => s.id === selectedWorkId);
+
+  return (
+    <div className="min-h-screen bg-[#0B0C0E] text-[#E0E0E0] font-sans pb-10 flex flex-col relative border-b border-slate-900">
+      
+      {/* 1. IMMERSIVE BRAND HEADER NAVIGATION */}
+      <header className="h-16 border-b border-slate-800 bg-[#0F1117] flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40 backdrop-blur-md">
+        <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-4">
+          
+          {/* Logo brand */}
+          <div 
+            onClick={() => { setRoute("landing"); setActiveStoryId(null); setSelectedWorkId(null); }}
+            className="flex items-center gap-3 cursor-pointer group shrink-0"
+          >
+            <div className="w-10 h-10 rounded-full border border-amber-500/30 overflow-hidden flex items-center justify-center bg-slate-950 transition duration-300 group-hover:scale-105 shadow-md shadow-amber-500/10">
+              <img
+                src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                alt="Stilova"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-base font-bold tracking-widest text-white group-hover:text-amber-500 transition font-sans leading-none">STILOVA</h1>
+              <span className="text-[9px] uppercase tracking-[0.2em] text-[#D97706]/90 font-mono mt-1">ÉCRIRE POUR EXISTER</span>
+            </div>
+          </div>
+
+          {/* Navigation Links for Visitors and Members and Admins */}
+          <nav className="flex items-center gap-1 sm:gap-2">
+            
+            <button
+              onClick={() => { setRoute("discover"); setActiveStoryId(null); setSelectedWorkId(null); }}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                route === "discover" || route === "story-detail"
+                  ? "bg-amber-500 text-black font-extrabold"
+                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
+              }`}
+            >
+              <Compass className="w-4 h-4" />
+              <span className="hidden md:inline">Découvrir</span>
+            </button>
+
+            <button
+              onClick={() => { setRoute("contests"); setActiveStoryId(null); setSelectedWorkId(null); }}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                route === "contests"
+                  ? "bg-amber-500 text-black font-extrabold"
+                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
+              }`}
+            >
+              <Trophy className="w-4 h-4" />
+              <span className="hidden md:inline">Défis & Concours</span>
+            </button>
+
+            <button
+              onClick={() => { setRoute("profiles"); setActiveStoryId(null); setSelectedWorkId(null); }}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                route === "profiles"
+                  ? "bg-amber-500 text-black font-extrabold"
+                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
+              }`}
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden md:inline">Profils publics</span>
+            </button>
+
+            {/* Atelier accessible strictly to logged in writers/admins */}
+            {currentUser && (currentUser.role === "writer" || currentUser.role === "admin") && (
+              <button
+                onClick={() => { setRoute("atelier"); setActiveStoryId(null); setSelectedWorkId(null); }}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                  route === "atelier"
+                    ? "bg-amber-500 text-black font-extrabold"
+                    : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
+                }`}
+              >
+                <PenTool className="w-4 h-4" />
+                <span className="hidden md:inline">Mon Atelier</span>
+              </button>
+            )}
+
+            {/* Moderators accessible to moderators and admins */}
+            {currentUser && (currentUser.role === "moderator" || currentUser.role === "admin") && (
+              <button
+                onClick={() => { setRoute("mods"); setActiveStoryId(null); setSelectedWorkId(null); }}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                  route === "mods"
+                    ? "bg-amber-500 text-black font-extrabold"
+                    : "text-[#A3A3A3] hover:text-slate-200 border border-slate-800 bg-slate-900/40"
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4 text-red-500" />
+                <span className="hidden md:inline">Modération</span>
+              </button>
+            )}
+          </nav>
+
+          {/* Right Header Panel (User Profile or Sign buttons) */}
+          <div className="flex items-center gap-3 shrink-0 pl-2 border-l border-slate-800">
+            {currentUser ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 hidden sm:flex">
+                  <img
+                    src={currentUser.avatarUrl}
+                    alt={currentUser.displayName}
+                    className="w-8 h-8 rounded-full border border-slate-800 bg-slate-950"
+                  />
+                  <div className="flex flex-col text-left">
+                    <span className="text-[11px] font-bold text-slate-200 leading-none">{currentUser.displayName}</span>
+                    <span className="text-[9px] text-amber-500 font-mono capitalize mt-0.5">{currentUser.role}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleLogout}
+                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 hover:text-red-400 border border-slate-800 transition cursor-pointer text-slate-400"
+                  title="Déconnexion"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => { setIsSigningUp(false); setRoute("login"); }}
+                  className="hidden sm:inline-block px-3 py-1.5 text-xs font-sans text-slate-400 hover:text-[#E0E0E0] font-semibold transition cursor-pointer"
+                >
+                  Se connecter
+                </button>
+                <button 
+                  onClick={() => { setIsSigningUp(true); setRoute("register"); }}
+                  className="bg-amber-550 hover:bg-amber-400 text-slate-950 font-sans font-bold px-4 py-2 rounded-xl text-xs shadow-md transition scale-100 active:scale-95 cursor-pointer"
+                >
+                  S'inscrire
+                </button>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </header>
+
+      {/* 2. CORE SCREEN RECONCILIATOR */}
+      <main className="max-w-7xl mx-auto w-full mt-6 flex-1 px-4 sm:px-6">
+        
+        {/* ==================================================== */}
+        {/* 2.1 IMMERSIVE PUBLIC LANDING SCREEN (default view) */}
+        {/* ==================================================== */}
+        {route === "landing" && (
+          <div className="flex flex-col gap-12 w-full animate-fade-in">
+            
+            {/* Giant Hero banner with logo and slogan */}
+            <div className="relative rounded-3xl overflow-hidden border border-slate-800 bg-[#0F1117] p-8 md:p-16 flex flex-col items-center justify-center text-center gap-6 min-h-[460px] shadow-2xl">
+              
+              {/* Absctract gorgeous shining pattern backdrop */}
+              <div className="absolute inset-0 bg-cover bg-center opacity-10 bg-no-repeat pointer-events-none" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1541701494587-cb58502866ab?auto=format&fit=crop&q=80&w=800')" }} />
+              <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-gradient-to-tr from-amber-500/10 via-indigo-950/15 to-transparent filter blur-3xl rounded-full pointer-events-none" />
+              
+              {/* Badge */}
+              <span className="text-[10px] bg-amber-500/15 border border-amber-500/30 text-amber-500 font-bold px-3 py-1 rounded-full uppercase tracking-widest font-mono">
+                ✨ L'UNIVERS LITTÉRAIRE PANAFRICAIN INTERACTIF
+              </span>
+
+              {/* Brand Medallion Logo */}
+              <div className="w-24 h-24 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-2">
+                <img
+                  src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                  alt="Stilova"
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              {/* Logo / Title */}
+              <div className="flex flex-col gap-2">
+                <h1 className="font-sans font-black tracking-widest text-4xl sm:text-7xl text-white">
+                  STILOVA
+                </h1>
+                <p className="font-serif italic font-bold text-lg sm:text-2xl text-amber-400 max-w-xl">
+                  « Le stylet qui grave ton histoire. »
+                </p>
+              </div>
+
+              {/* Description */}
+              <p className="text-xs sm:text-sm text-slate-400 max-w-2xl font-light leading-relaxed font-sans">
+                Découvrez des centaines de fictions d'Afrofuturisme, récits mythologiques et drames poétiques où <strong>vous êtes le maître des décisions</strong>. Profitez d'une atmosphère sonore d'or et de récits audio générés en live par IA.
+              </p>
+
+              {/* CTA buttons */}
+              <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
+                <button
+                  onClick={() => setRoute("discover")}
+                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold py-3.5 px-8 rounded-2xl text-xs uppercase tracking-widest shadow-lg shadow-amber-500/10 cursor-pointer transition transform hover:scale-105 active:scale-95"
+                >
+                  Commencer à lire
+                </button>
+                <button
+                  onClick={() => { setIsSigningUp(true); setRoute("register"); }}
+                  className="bg-slate-950 hover:bg-slate-900 text-slate-200 hover:text-white border border-slate-800 font-sans font-bold py-3.5 px-8 rounded-2xl text-xs cursor-pointer transition"
+                >
+                  Créer un compte d'auteur
+                </button>
+              </div>
+
+              {/* Quiet Signin Link */}
+              <span className="text-[11px] font-mono text-slate-500 mt-2">
+                Déjà membre ?{" "}
+                <button 
+                  onClick={() => { setIsSigningUp(false); setRoute("login"); }}
+                  className="text-amber-550 hover:underline hover:text-amber-400 font-bold cursor-pointer inline-block"
+                >
+                  Se connecter de suite
+                </button>
+              </span>
+            </div>
+
+            {/* Explanation section: Three core pillars */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
+                  <Compass className="w-5 h-5 text-amber-500" />
+                </div>
+                <h3 className="font-sans font-bold text-slate-100 text-sm">Lire gratuitement</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                  Explorez et lisez un catalogue riche en culture d'Afrique de l'Ouest, avec des fiches détaillées d'œuvres interactives, librement.
+                </p>
+              </div>
+
+              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
+                  <PenTool className="w-5 h-5 text-amber-500" />
+                </div>
+                <h3 className="font-sans font-bold text-slate-100 text-sm">Écrire ses histoires</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                  Devenez auteur de la cour royale ! Concevez vos propres scénarios interactifs et profitez du Copilote de plume virtuel raccordé au réseau.
+                </p>
+              </div>
+
+              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
+                  <Trophy className="w-5 h-5 text-amber-500" />
+                </div>
+                <h3 className="font-sans font-bold text-slate-100 text-sm">Participer aux concours</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                  Rejoignez l'arène des plumes, soumettez votre livre aux défis en cours et remportez de fabuleuses récompenses physiques et bourses d'écriture.
+                </p>
+              </div>
+            </div>
+
+            {/* Popular Stories Carousel Tray (Netflix/Wattpad style) */}
+            <div className="flex flex-col gap-4 mt-2">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-slate-305 uppercase tracking-widest flex items-center gap-1.5">
+                  <Flame className="w-4 h-4 text-amber-500 animate-pulse" />
+                  Histoires Populaires
+                </span>
+                <button 
+                  onClick={() => setRoute("discover")}
+                  className="text-xs text-amber-500 hover:underline font-bold"
+                >
+                  Voir tout le catalogue
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {stories.slice(0, 3).map((story) => (
+                  <div
+                    key={story.id}
+                    onClick={() => handleOpenStoryReader(story.id)}
+                    className="group bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-none p-4 flex gap-4 cursor-pointer transition duration-300"
+                  >
+                    <img
+                      src={story.coverUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300"}
+                      alt={story.title}
+                      className="w-20 h-28 object-cover border border-slate-750 group-hover:scale-105 transition duration-300 shrink-0"
+                    />
+                    <div className="flex flex-col justify-between flex-1 min-w-0">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] text-amber-500 bg-slate-950 border border-amber-500/20 w-max px-1.5 py-0.5 font-bold rounded-none uppercase">
+                          {story.genre}
+                        </span>
+                        <h4 className="font-sans font-bold text-slate-105 group-hover:text-amber-400 text-xs sm:text-sm truncate">
+                          {story.title}
+                        </h4>
+                        <span className="text-[10px] text-slate-400 font-serif italic">
+                          Par {story.authorName}
+                        </span>
+                        <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5 leading-relaxed font-sans">
+                          {story.description}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 text-[9px] font-mono text-slate-400 border-t border-slate-950 pt-2.5">
+                        <span className="flex items-center gap-0.5">
+                          <Eye className="w-3 h-3 text-slate-550" /> {story.viewsCount}
+                        </span>
+                        <span className="flex items-center gap-0.5 text-amber-500">
+                          <Star className="w-3 h-3 fill-current" /> {story.rating}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Current Active Battle banner */}
+            <div className="flex flex-col gap-4 mt-2">
+              <span className="text-xs font-bold text-slate-350 uppercase tracking-widest pl-1">
+                🏆 S'élancer dans un concours en cours
+              </span>
+              <div 
+                onClick={() => setRoute("contests")}
+                className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-transparent border border-slate-800 p-6 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 cursor-pointer hover:border-amber-500/30 transition shadow-lg"
+              >
+                <div>
+                  <h4 className="font-sans font-extrabold text-slate-100 text-sm md:text-base">Plumes du Futur — L'Afrofuturisme 2100+</h4>
+                  <p className="text-xs text-slate-400 leading-normal font-sans mt-1">
+                    Racontez les secrets électriques du fleuve Niger après la grande mousson cybernétique.
+                  </p>
+                  <div className="flex gap-4 text-[10px] font-mono text-slate-500 mt-2.5">
+                    <span>🏆 Prix : 5,000,000 FCFA</span>
+                    <span>⌛ Clôture : Août 2026</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="bg-amber-500 text-black font-sans font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition self-end md:self-auto shrink-0"
+                >
+                  <span>Rejoindre l'arène</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Curated Authors Discover Panel */}
+            <div className="flex flex-col gap-4 mt-2 mb-10">
+              <span className="text-xs font-bold text-[#A3A3A3] uppercase tracking-widest pl-1">
+                ✍️ Auteurs & Narrateurs d'Exception
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {PUBLIC_AUTHORS.map((author) => (
+                  <div 
+                    key={author.uid}
+                    className="bg-slate-900/60 border border-slate-800 p-5 rounded-3xl flex flex-col justify-between gap-4"
+                  >
+                    <div className="flex items-start gap-3.5">
+                      <img 
+                        src={author.avatar} 
+                        alt={author.name}
+                        className="w-12 h-12 rounded-full border border-slate-800 bg-[#0B0C0E] shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <h4 className="font-sans font-bold text-slate-100 text-xs sm:text-sm">{author.name}</h4>
+                        <span className="text-[10px] text-slate-500 font-sans block">{author.location}</span>
+                        <p className="text-[11px] text-slate-400 leading-normal font-sans font-light mt-1.5 line-clamp-3">
+                          {author.bio}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="border-t border-slate-950 pt-3 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500 font-mono">👥 {author.followers} abonnés</span>
+                      <button
+                        onClick={handleProtectedActionTrigger}
+                        className="bg-amber-550/10 hover:bg-amber-550 hover:text-slate-950 border border-amber-500/20 text-amber-500 text-[10px] font-sans font-semibold py-1.5 px-4 rounded-xl transition cursor-pointer"
+                      >
+                        Suivre l'auteur
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.2 PUBLIC CATALOG / DISCOVER VIEW                  */}
+        {/* ==================================================== */}
+        {route === "discover" && (
+          <LibraryView
+            stories={stories}
+            onSelectStory={handleOpenStoryReader}
+            currentUserRole={currentUser ? currentUser.role : "visitor"}
+            onOpenCreateModal={
+              currentUser && (currentUser.role === "writer" || currentUser.role === "admin")
+                ? () => setIsCreateModalOpen(true)
+                : undefined
+            }
+          />
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.3 STORY DETAIL - FICHE DE L'OEUVRE PRIVILEGE VIEW  */}
+        {/* ==================================================== */}
+        {route === "story-detail" && activeDetailedStory && (
+          <StoryDetailView
+            story={activeDetailedStory}
+            chapterCount={activeNodes.length || 3}
+            onBack={() => setRoute("discover")}
+            onStartReading={handleOpenStoryReaderFromDetail}
+            isVisitor={!currentUser}
+            onActionLockTrigger={handleProtectedActionTrigger}
+          />
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.4 IMMERSIVE CHAPTER READER VIEW (extract preview)  */}
+        {/* ==================================================== */}
+        {route === "reader" && activeStoryId && (
+          <ReaderView 
+            storyId={activeStoryId} 
+            onBack={() => setRoute("discover")} 
+            userId={currentUser ? currentUser.uid : "visitor"}
+            isVisitor={!currentUser}
+            onRegisterRedirect={() => {
+              setIsSigningUp(true);
+              setRoute("register");
+            }}
+          />
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.5 PUBLIC CONTESTS VIEW                            */}
+        {/* ==================================================== */}
+        {route === "contests" && (
+          <ContestsView
+            currentUserUid={currentUser ? currentUser.uid : undefined}
+            currentUserRole={currentUser ? currentUser.role : undefined}
+            myStories={myStories}
+            onSelectStory={handleOpenStoryReader}
+            isVisitor={!currentUser}
+          />
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.6 PUBLIC AUTHORS PROFILES GRID                     */}
+        {/* ==================================================== */}
+        {route === "profiles" && (
+          <div className="flex flex-col gap-8 w-full animate-fade-in mb-10">
+            <div className="bg-gradient-to-r from-amber-550/15 via-indigo-950/20 to-transparent p-6 rounded-3xl border border-slate-800">
+              <h2 className="font-sans font-bold text-slate-100 text-lg md:text-2xl">Les Plumes du Cercle Stilova</h2>
+              <p className="text-xs text-[#A3A3A3] font-sans mt-0.5 leading-relaxed max-w-2xl">
+                Parcourez les profils officiels de nos conteurs les plus illustres. Lisez leurs manuscrits originaux, explorez leurs biographies et suivez-les pour être tenu informé de leurs nouveaux chapitres interactifs.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {PUBLIC_AUTHORS.map((author) => (
+                <div 
+                  key={author.uid}
+                  className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col justify-between gap-6 hover:border-slate-700/60 transition"
+                >
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-4">
+                      <img 
+                        src={author.avatar} 
+                        alt={author.name}
+                        className="w-16 h-16 rounded-full border-2 border-amber-500/20 bg-slate-950"
+                      />
+                      <div>
+                        <h4 className="font-sans font-bold text-slate-100 text-sm md:text-base">{author.name}</h4>
+                        <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono block w-max mt-1">
+                          {author.location}
+                        </span>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-300 font-sans font-light leading-relaxed">
+                      {author.bio}
+                    </p>
+
+                    <div className="flex flex-col gap-1.5 mt-2 bg-slate-950/50 p-3 rounded-2xl border border-slate-850">
+                      <span className="text-[10px] font-mono text-slate-500 uppercase font-bold tracking-wider0">Écrits publiés</span>
+                      <ul className="text-xs text-slate-400 flex flex-col gap-1">
+                        {author.storiesWritten.map((title, i) => (
+                          <li key={i} className="flex items-center gap-1.5">
+                            <CornerDownRight className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <span className="truncate">{title}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-900 pt-4 mt-2">
+                    <div className="flex items-center gap-4 text-[10px] font-mono text-slate-500">
+                      <span>👥 {author.followers} abonnés</span>
+                    </div>
+                    <button
+                      onClick={handleProtectedActionTrigger}
+                      className="bg-amber-550 hover:bg-amber-400 border border-amber-500/30 text-slate-950 text-xs font-sans font-bold py-2 px-5 rounded-xl transition cursor-pointer"
+                    >
+                      Suivre plume
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.7 PROTECTED LOGIN / REGISTER SCREEN GATEWAYS      */}
+        {/* ==================================================== */}
+        {(route === "login" || route === "register") && (
+          <div className="min-h-[500px] flex items-center justify-center p-4 relative overflow-hidden animate-fade-in">
+            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-gradient-to-tr from-amber-500/10 via-indigo-900/15 to-transparent filter blur-3xl rounded-full" />
+
+            <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 flex flex-col gap-6 shadow-2xl relative z-10">
+              
+              {/* Slogan Logo Header */}
+              <div className="text-center flex flex-col items-center gap-1">
+                <div className="w-14 h-14 rounded-full border border-amber-500/30 overflow-hidden shadow-lg bg-slate-950">
+                  <img
+                    src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                    alt="Stilova"
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <h1 className="font-sans font-black tracking-tight text-2xl text-slate-100 mt-2">
+                  STILOVA
+                </h1>
+                <p className="font-serif text-xs italic text-amber-400">
+                  Le stylet qui grave ton histoire.
+                </p>
+              </div>
+
+              <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
+                
+                {/* Is Registering Progression Block */}
+                {route === "register" && (
+                  <div className="flex flex-col gap-3">
+                    
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase">Nom d'Auteur / Pseudo</label>
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        required
+                        placeholder="Ex: Plume Moderne, Fatou_99..."
+                        className="bg-slate-950 border border-slate-800 px-4 py-3 rounded-2xl text-xs text-slate-200 outline-none focus:ring-1 focus:ring-amber-500 w-full"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase">Vocation de stylet</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSignupRole("reader")}
+                          className={`py-2.5 rounded-xl border text-xs font-semibold transition ${
+                            signupRole === "reader" 
+                              ? "bg-amber-500 border-amber-400 text-slate-950 font-bold" 
+                              : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-350"
+                          }`}
+                        >
+                          📘 Lecteur Curieux
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSignupRole("writer")}
+                          className={`py-2.5 rounded-xl border text-xs font-semibold transition ${
+                            signupRole === "writer" 
+                              ? "bg-amber-500 border-amber-400 text-slate-950 font-bold" 
+                              : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-350"
+                          }`}
+                        >
+                          ✍️ Écrivain / Plume
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Preset Avatar selects */}
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">Choisissez votre Masque/Avatar</span>
+                      <div className="flex items-center gap-3.5 justify-center py-1">
+                        {AVATAR_PRESETS.map((p, idx) => (
+                          <img
+                            key={idx}
+                            src={p.url}
+                            alt={p.name}
+                            onClick={() => setSelectedAvatar(p.url)}
+                            title={p.name}
+                            className={`w-10 h-10 rounded-xl border-2 transition transform cursor-pointer hover:scale-110 ${selectedAvatar === p.url ? "border-amber-500 scale-105" : "border-slate-800"}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* Email address */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold uppercase">Adresse E-mail</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    placeholder="Ex : amadou@stilova.com"
+                    className="bg-slate-950 border border-slate-800 px-4 py-3 rounded-2xl text-xs text-slate-200 outline-none focus:ring-1 focus:ring-amber-500 w-full"
+                  />
+                </div>
+
+                {/* Password secret field */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold uppercase">Mot de passe</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    placeholder="••••••••"
+                    className="bg-slate-950 border border-slate-800 px-4 py-3 rounded-2xl text-xs text-slate-200 outline-none focus:ring-1 focus:ring-amber-500 w-full"
+                  />
+                </div>
+
+                {authError && (
+                  <div className="flex flex-col gap-3 p-4 bg-red-950/30 border border-red-900/60 rounded-2xl text-xs">
+                    <div className="flex items-start gap-2.5 text-red-300">
+                      <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                      <div className="flex flex-col gap-1">
+                        <span className="font-bold">⚠️ Échec de l'authentification</span>
+                        <span className="text-[11px] leading-relaxed opacity-90">{authError}</span>
+                      </div>
+                    </div>
+
+                    {authError.includes("operation-not-allowed") && (
+                      <div className="border-t border-red-900/40 pt-2.5 mt-1 text-[11px] leading-relaxed text-slate-300 flex flex-col gap-2">
+                        <p>
+                          <strong>Pourquoi cette erreur ?</strong> Par défaut, l'authentification par <strong>"E-mail / Mot de passe"</strong> n'est pas encore activée dans votre console de projet Firebase.
+                        </p>
+                        <div className="bg-slate-950/60 p-2.5 rounded-lg text-[10px] font-mono text-slate-400 border border-slate-800">
+                          Pour y remédier :<br/>
+                          1. Allez sur votre Console Firebase<br/>
+                          2. Menu Authentification &gt; Sign-in method<br/>
+                          3. Activez "Adresse e-mail/Mot de passe"
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border-t border-red-900/40 pt-2.5 mt-1 flex flex-col gap-1.5">
+                      <span className="text-[10px] text-slate-400 text-center font-semibold">Tester immédiatement Stilova sans configuration :</span>
+                      <button
+                        type="button"
+                        onClick={handleDemoBypass}
+                        className="py-2.5 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl font-bold font-sans text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md active:scale-98 shadow-amber-500/10"
+                      >
+                        ⚡ Entrer en Mode Démo (Bypass local)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-bold py-3.5 px-4 rounded-2xl text-xs transition scale-100 active:scale-98 cursor-pointer mt-2"
+                >
+                  {route === "register" ? "Rejoindre le cercle Stilova" : "Entrer dans la Bibliothèque"}
+                </button>
+              </form>
+
+              {/* Swap login / register */}
+              <div className="text-center text-xs text-slate-500 border-t border-slate-850 pt-4">
+                {route === "register" ? (
+                  <span>Déjà membre ?{" "}
+                    <button 
+                      onClick={() => { setRoute("login"); setAuthError(null); }}
+                      className="text-amber-550 hover:underline font-semibold cursor-pointer"
+                    >
+                      Se connecter
+                    </button>
+                  </span>
+                ) : (
+                  <span>Pas de plume ?{" "}
+                    <button 
+                      onClick={() => { setRoute("register"); setAuthError(null); }}
+                      className="text-amber-550 hover:underline font-semibold cursor-pointer"
+                    >
+                      Créer un compte gratuit
+                    </button>
+                  </span>
+                )}
+              </div>
+
+              <div id="auth-bypass-help" className="text-center text-[10px] text-slate-500 bg-slate-950 border border-slate-850 rounded-xl p-2.5 font-mono flex flex-col gap-1">
+                <span>Comptes super admin autorisés :</span>
+                <div>
+                  <code className="text-amber-500 font-bold">gabrielyombi311@gmail.com</code> ou <code className="text-amber-500 font-bold">yombivictor@gmail.com</code>
+                </div>
+                <span className="text-[9px] text-slate-600">(Tous les emails contenant "yombi" sont promus super-admin)</span>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.8 WRITER AREA - MON ATELIER WORKSPACE              */}
+        {/* ==================================================== */}
+        {route === "atelier" && currentUser && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 px-4 sm:px-6">
+            
+            {/* Story selector rail */}
+            <div className="lg:col-span-1 flex flex-col gap-4">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vos œuvres gravées</span>
+                <button
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="text-[10px] bg-amber-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-slate-950" /> Créer
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {myStories.length === 0 ? (
+                  <div className="bg-slate-900/30 border border-dashed border-slate-800 rounded-3xl p-8 text-center text-slate-500 text-xs">
+                    Votre encrier Stilova est encore plein. Créez votre première œuvre interactive pour débloquer l'assistant de plume !
+                  </div>
+                ) : (
+                  myStories.map(story => (
+                    <div
+                      key={story.id}
+                      onClick={() => handleFocusStoryAtelier(story)}
+                      className={`p-4 rounded-3xl border cursor-pointer transition flex flex-col gap-2 ${
+                        writingStory?.id === story.id
+                          ? "bg-slate-900/85 border-amber-500/50 scale-101 shadow-lg shadow-amber-500/5"
+                          : "bg-slate-900/30 border-slate-800 text-slate-300 hover:bg-slate-900"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <span className="text-[9px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-0.5 rounded-full capitalize">
+                          {story.genre}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteStory(story.id);
+                          }}
+                          className="p-1 rounded hover:bg-red-950/40 text-slate-500 hover:text-red-400 transition"
+                          title="Supprimer ce livre"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <h4 className="font-sans font-bold text-xs text-slate-100 tracking-tight leading-snug line-clamp-1">
+                        {story.title}
+                      </h4>
+
+                      <div className="flex justify-between items-center mt-1 border-t border-slate-950 pt-2 text-[10px]">
+                        <span className={`font-bold ${story.isPublished ? "text-green-400" : "text-amber-500"}`}>
+                          {story.isPublished ? "🚀 Publié" : "📦 Brouillon"}
+                        </span>
+                        <span className="text-slate-500 font-mono">{story.viewsCount} lectures</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Detailed active story editor block */}
+            {writingStory ? (
+              <div className="lg:col-span-2 flex flex-col gap-6 animate-fade-in">
+                
+                {/* Book control panel */}
+                <div className="bg-slate-900/70 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-sans font-bold text-slate-100 text-sm md:text-base">Atelier: {writingStory.title}</h3>
+                    <p className="text-[11px] text-[#A3A3A3] leading-normal font-sans mt-0.5">
+                      Gérez les chapitres de votre histoire interactive ou basculez son état de publication.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handlePublishToggleStory}
+                      className={`px-3 py-2 rounded-2xl text-[10px] font-bold cursor-pointer transition ${
+                        writingStory.isPublished
+                          ? "bg-red-500/20 border border-red-500 text-red-400 hover:bg-red-500/30"
+                          : "bg-amber-500 text-slate-950 hover:bg-amber-400"
+                      }`}
+                    >
+                      {writingStory.isPublished ? "Retirer de la diffusion" : "Mettre en publication"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Editor Sub-Tabs Option bar */}
+                <div className="flex border-b border-slate-800 gap-1 mt-1">
+                  <button
+                    onClick={() => setEditorSubTab("content")}
+                    className={`px-4 py-2 text-xs font-bold transition-all duration-300 border-b-2 flex items-center gap-1.5 ${
+                      editorSubTab === "content"
+                        ? "border-amber-500 text-amber-500 bg-amber-500/5 font-extrabold"
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <PenTool className="w-3.5 h-3.5" /> Écriture & Embranchements
+                  </button>
+                  <button
+                    onClick={() => setEditorSubTab("typography")}
+                    className={`px-4 py-2 text-xs font-bold transition-all duration-300 border-b-2 flex items-center gap-1.5 ${
+                      editorSubTab === "typography"
+                        ? "border-amber-500 text-amber-500 bg-amber-500/5 font-extrabold"
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Sliders className="w-3.5 h-3.5 text-indigo-400" /> Identité Typographique & Signature
+                  </button>
+                </div>
+
+                {editorSubTab === "content" ? (
+                  /* Sub layout: Branch node creator panel */
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    
+                    {/* Nodes branch rail list */}
+                    <div className="md:col-span-1 flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Arborescence</span>
+                        <button
+                          onClick={handleCreateNewNodePlaceholder}
+                          className="text-[10px] text-amber-500 hover:underline flex items-center gap-0.5"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Chapitre
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 max-h-96 overflow-y-auto pr-1">
+                        {activeNodes.map(node => (
+                          <div
+                            key={node.id}
+                            onClick={() => handleSelectNodeToEdit(node)}
+                            className={`p-3 rounded-2xl border text-left cursor-pointer transition flex flex-col gap-1 ${
+                              editingNode?.id === node.id
+                                ? "bg-indigo-950/40 border-indigo-500"
+                                : "bg-slate-950 border-slate-900 text-slate-300 hover:border-slate-850"
+                            }`}
+                          >
+                            <span className="text-[10px] font-bold text-slate-200 truncate">{node.title}</span>
+                            <div className="flex items-center justify-between text-[9px] text-slate-500">
+                              <span>{node.isRoot ? "🌱 Racine" : "🌿 Branche"}</span>
+                              <span>{node.choices?.length || 0} choix</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Active node text content area */}
+                    {editingNode ? (
+                      <div className="md:col-span-2 flex flex-col gap-5">
+                        
+                        {/* Chapter name and text */}
+                        <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4">
+                          
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase">Titre du Chapitre / Scène</label>
+                            <input
+                              type="text"
+                              value={newNodeTitle}
+                              onChange={(e) => setNewNodeTitle(e.target.value)}
+                              placeholder="Ex : Chapitre 1 - Le secret de l'encrier"
+                              className="bg-slate-900 border border-slate-855 rounded-xl py-2 px-3.5 text-xs text-slate-200 outline-none w-full font-sans"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1.5">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase">Contenu narrative de la scène</label>
+                            <textarea
+                              value={newNodeContent}
+                              onChange={(e) => setNewNodeContent(e.target.value)}
+                              rows={10}
+                              placeholder="Écrivez le fil de votre intrigue..."
+                              className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 outline-none w-full font-sans leading-relaxed resize-none"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              id="rootCheck"
+                              checked={isRootNode}
+                              onChange={(e) => setIsRootNode(e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-800 text-amber-500 cursor-pointer"
+                            />
+                            <label htmlFor="rootCheck" className="text-xs text-[#A3A3A3] cursor-pointer">
+                              Scène de départ officielle de l'œuvre (Racine 🌱)
+                            </label>
+                          </div>
+
+                          <button
+                            onClick={handleSaveNodeChanges}
+                            disabled={savingNode}
+                            className="bg-green-500 hover:bg-green-400 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            {savingNode ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" /> : <Check className="w-3.5 h-3.5" />}
+                            <span>Sauvegarder ce chapitre</span>
+                          </button>
+
+                        </div>
+
+                        {/* CHOICES TREE SETTING COMPONENT */}
+                        {writingStory.isInteractive && (
+                          <div className="bg-[#0B0C0E] border border-slate-805 p-5 rounded-3xl flex flex-col gap-4">
+                            <span className="text-xs font-bold text-slate-200 uppercase tracking-widest">Enchaînements logiques (Choix de débranchement)</span>
+                            
+                            {/* List of current active choices */}
+                            <div className="flex flex-col gap-2">
+                              {(editingNode.choices || []).length === 0 ? (
+                                <span className="text-[11px] text-slate-500">Aucun choix défini pour cette scène.</span>
+                              ) : (
+                                (editingNode.choices || []).map((choice, i) => (
+                                  <div key={i} className="flex justify-between items-center bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 text-xs">
+                                    <div className="min-w-0">
+                                      <span className="text-[9px] text-[#D97706]/90 font-bold uppercase block">Choix {i + 1}</span>
+                                      <span className="text-slate-200 truncate max-w-xs">{choice.text}</span>
+                                    </div>
+                                    <button
+                                      onClick={() => handleRemoveChoice(i)}
+                                      className="p-1 rounded text-red-500 hover:bg-red-950/20 transition cursor-pointer"
+                                    >
+                                      Retirer
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Form to insert quick choices */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 border-t border-slate-900 pt-4">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-slate-400">Texte affiché au lecteur :</label>
+                                <input
+                                  type="text"
+                                  value={nodeChoiceText}
+                                  onChange={(e) => setNodeChoiceText(e.target.value)}
+                                  placeholder="Ex: Prendre le bateau de secours"
+                                  className="bg-slate-900 border border-slate-800 rounded-xl py-2 px-3.5 text-xs text-slate-200 outline-none w-full"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-[#A3A3A3]">Chapitre de destination :</label>
+                                <select
+                                  value={nodeChoiceDestination}
+                                  onChange={(e) => setNodeChoiceDestination(e.target.value)}
+                                  className="bg-slate-900 border border-slate-800 rounded-xl py-2 px-3.5 text-xs text-slate-200 outline-none w-full cursor-pointer"
+                                >
+                                  <option value="">-- Sélectionner --</option>
+                                  {activeNodes.filter(n => n.id !== editingNode.id).map(node => (
+                                    <option key={node.id} value={node.id}>{node.title}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleAddChoice}
+                              className="bg-slate-800 hover:bg-slate-750 font-bold border border-slate-700 py-3 rounded-xl text-xs transition cursor-pointer mt-1"
+                            >
+                              + Insérer cette décision
+                            </button>
+                          </div>
+                        )}
+
+                      </div>
+                    ) : (
+                      <div className="md:col-span-2 text-center p-8 text-slate-500 text-xs">
+                        Créez ou sélectionnez un chapitre pour l'éditer.
+                      </div>
+                    )}
+
+                  </div>
+                ) : (
+                  /* Sub layout: Typography Customizer Panel */
+                  <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 animate-fade-in">
+                    
+                    {/* Configurations columns */}
+                    <div className="xl:col-span-3 flex flex-col gap-6">
+                      
+                      {/* 1. Polices pour les titres */}
+                      <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4 shadow-[#000000]/60 shadow-lg">
+                        <div className="flex items-center gap-2 pb-2.5 border-b border-slate-900">
+                          <Type className="w-4 h-4 text-amber-500" />
+                          <span className="text-xs font-bold text-slate-200 uppercase tracking-widest">Polices pour les titres</span>
+                        </div>
+                        
+                        <div className="flex flex-col gap-2">
+                          <label className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Sélectionner la police de display (Titre principal & Chapitres)</label>
+                          <div className="grid grid-cols-1 gap-4 max-h-56 overflow-y-auto pr-1 font-sans">
+                            {TITLE_FONTS.map(cat => (
+                              <div key={cat.title} className="flex flex-col gap-1 border-b border-slate-900/60 pb-3 last:border-0 last:pb-0">
+                                <span className="text-[9px] font-mono text-indigo-400 font-extrabold uppercase tracking-wider block">{cat.title}</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {cat.fonts.map(font => (
+                                    <button
+                                      key={font.id}
+                                      onClick={() => {
+                                        storyTitleFont !== font.id && setStoryTitleFont(font.id);
+                                      }}
+                                      className={`text-xs p-2.5 border text-left rounded-xl transition ${
+                                        storyTitleFont === font.id
+                                          ? "bg-amber-500/10 border-amber-500 text-amber-400 font-bold"
+                                          : "bg-slate-900 border-slate-850 text-slate-400 hover:border-slate-800 hover:text-slate-200"
+                                      }`}
+                                      style={{ fontFamily: font.id }}
+                                    >
+                                      {font.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Title Font weight selector */}
+                        <div className="flex flex-col gap-1.5 mt-2 border-t border-slate-900 pt-3">
+                          <label className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Graisse pour les titres de l'auteur</label>
+                          <div className="grid grid-cols-4 gap-2">
+                            {["normal", "medium", "bold", "extrabold"].map(weight => (
+                              <button
+                                key={weight}
+                                onClick={() => setStoryTitleFontWeight(weight)}
+                                className={`text-[9px] py-2 rounded-xl border uppercase font-mono tracking-wider transition ${
+                                  storyTitleFontWeight === weight
+                                    ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold"
+                                    : "bg-slate-900 border-slate-850 text-slate-500 hover:text-slate-300"
+                                }`}
+                              >
+                                {weight}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Signature globale automatique */}
+                      <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4 shadow-[#000000]/60 shadow-lg">
+                        <div className="flex items-center justify-between pb-2.5 border-b border-slate-900">
+                          <div className="flex items-center gap-2">
+                            <Sliders className="w-4 h-4 text-indigo-400" />
+                            <span className="text-xs font-bold text-slate-200 uppercase tracking-widest">Signer automatiquement mes chapitres</span>
+                          </div>
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              id="autoSigToggle"
+                              checked={storyAutoSignatureEnabled}
+                              onChange={(e) => setStoryAutoSignatureEnabled(e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-800 text-amber-500 w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {storyAutoSignatureEnabled ? (
+                          <div className="flex flex-col gap-4 animate-fade-in font-sans">
+                            
+                            {/* Text inputs */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Texte de remerciement (Exemple)</label>
+                                <input
+                                  type="text"
+                                  value={storyDefaultSignature.split('\n')[0] || ""}
+                                  onChange={(e) => {
+                                    const prevLines = storyDefaultSignature.split('\n');
+                                    const secondLine = prevLines[1] || `— ${writingStory.authorName}`;
+                                    setStoryDefaultSignature(`${e.target.value}\n${secondLine}`);
+                                  }}
+                                  placeholder="Merci d'avoir lu ce chapitre."
+                                  className="bg-slate-900 border border-slate-800 rounded-xl py-2 px-3.5 text-xs text-slate-200 outline-none w-full"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Nom d'auteur affiché</label>
+                                <input
+                                  type="text"
+                                  value={(storyDefaultSignature.split('\n')[1] || "").replace(/^—\s*/, "")}
+                                  onChange={(e) => {
+                                    const prevLines = storyDefaultSignature.split('\n');
+                                    const firstLine = prevLines[0] || "Merci d'avoir lu ce chapitre.";
+                                    setStoryDefaultSignature(`${firstLine}\n— ${e.target.value}`);
+                                  }}
+                                  placeholder="Ex : Archange"
+                                  className="bg-slate-900 border border-slate-800 rounded-xl py-2 px-3.5 text-xs text-slate-200 outline-none w-full"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Styles selection */}
+                            <div className="flex flex-col gap-4 mt-2 border-t border-slate-900 pt-3 font-sans">
+                              
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Police de signature</label>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 font-sans">
+                                  {SIGNATURE_FONTS.flatMap(cat => cat.fonts).map(font => (
+                                    <button
+                                      key={font.id}
+                                      onClick={() => setStorySignatureFont(font.id)}
+                                      className={`text-[11px] p-2 border text-left rounded-xl transition ${
+                                        storySignatureFont === font.id
+                                          ? "bg-indigo-505/15 border-indigo-500 text-indigo-400 font-bold"
+                                          : "bg-slate-900 border-slate-850 text-slate-400 hover:border-slate-805"
+                                      }`}
+                                      style={{ fontFamily: font.id }}
+                                    >
+                                      {font.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Colors list */}
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Palette chromatique d'auteur (Stilova unique)</label>
+                                <div className="flex gap-2 flex-wrap bg-slate-900/60 p-2.5 rounded-xl border border-slate-850">
+                                  {STILOVA_COLORS.map(color => (
+                                    <button
+                                      key={color.id}
+                                      onClick={() => setStorySignatureColor(color.id)}
+                                      className={`w-7 h-7 rounded-full transition flex items-center justify-center hover:scale-105 active:scale-95 ${color.bgClass}`}
+                                      style={{ backgroundColor: color.value }}
+                                      title={color.name}
+                                    >
+                                      {storySignatureColor === color.id && (
+                                        <div className="w-4 h-4 rounded-full bg-slate-950 flex items-center justify-center">
+                                          <Check className="w-2.5 h-2.5 text-amber-500" />
+                                        </div>
+                                      )}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Aligns list */}
+                              <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Alignement typographique</label>
+                                <div className="flex gap-2">
+                                  {SIGNATURE_ALIGNMENTS.map(align => (
+                                    <button
+                                      key={align.id}
+                                      onClick={() => setStorySignatureAlign(align.id)}
+                                      className={`flex-1 py-2 border text-xs rounded-xl transition font-mono tracking-wider ${
+                                        storySignatureAlign === align.id
+                                          ? "bg-indigo-500/10 border-indigo-500 text-indigo-400 font-bold"
+                                          : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"
+                                      }`}
+                                    >
+                                      {align.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                            </div>
+
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 bg-slate-900/20 border border-slate-850 rounded-xl text-slate-500 text-xs italic">
+                            Les chapitres d'œuvres n'auront pas de bloc de signature généré par défaut.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. Chapitre Actif Signature Override */}
+                      {editingNode && (
+                        <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4 shadow-[#000000]/60 shadow-lg">
+                          <div className="flex items-center justify-between pb-2.5 border-b border-slate-900">
+                            <div className="flex items-center gap-2">
+                              <Edit2 className="w-4 h-4 text-emerald-400" />
+                              <span className="text-xs font-bold text-slate-200 uppercase tracking-widest line-clamp-1">
+                                Override personnalisé pour : {editingNode.title}
+                              </span>
+                            </div>
+                            <div>
+                              <input
+                                type="checkbox"
+                                id="chapterSigToggle"
+                                checked={chapterSignatureEnabled}
+                                onChange={(e) => setChapterSignatureEnabled(e.target.checked)}
+                                className="rounded bg-slate-900 border-slate-800 text-emerald-500 w-4 h-4 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+
+                          {chapterSignatureEnabled ? (
+                            <div className="flex flex-col gap-4 animate-fade-in pl-1 font-sans">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Remerciement ou dédicace sur-mesure (Paragraphe)</label>
+                                <textarea
+                                  value={chapterSignatureText}
+                                  onChange={(e) => setChapterSignatureText(e.target.value)}
+                                  placeholder="Écrivez une dédicace ou remerciement spécial pour ce chapitre à la place de la signature de l'œuvre..."
+                                  rows={4}
+                                  className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 outline-none w-full resize-none leading-relaxed"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Police spécifique</label>
+                                  <select
+                                    value={chapterSignatureFont}
+                                    onChange={(e) => setChapterSignatureFont(e.target.value)}
+                                    className="bg-slate-900 border border-slate-800 text-slate-300 rounded-xl p-2.5 text-xs outline-none cursor-pointer"
+                                  >
+                                    {SIGNATURE_FONTS.flatMap(cat => cat.fonts).map(font => (
+                                      <option key={font.id} value={font.id} style={{ fontFamily: font.id }}>{font.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Couleur spécifique</label>
+                                  <select
+                                    value={chapterSignatureColor}
+                                    onChange={(e) => setChapterSignatureColor(e.target.value)}
+                                    className="bg-slate-900 border border-slate-800 text-slate-300 rounded-xl p-2.5 text-xs outline-none cursor-pointer font-sans"
+                                  >
+                                    {STILOVA_COLORS.map(color => (
+                                      <option key={color.id} value={color.id}>{color.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-1 mt-1 border-t border-slate-900 pt-3">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Alignement sur-mesure</label>
+                                <div className="flex gap-2">
+                                  {SIGNATURE_ALIGNMENTS.map(align => (
+                                    <button
+                                      key={align.id}
+                                      onClick={() => setChapterSignatureAlign(align.id)}
+                                      className={`flex-1 py-1 px-3 border text-[10px] rounded-lg text-center transition ${
+                                        chapterSignatureAlign === align.id
+                                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-400 font-bold"
+                                          : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"
+                                      }`}
+                                    >
+                                      {align.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-center py-2 bg-slate-900/10 border border-slate-855 rounded-xl text-slate-500 text-[10px] italic">
+                              Hérite de la signature d'œuvre automatique définie ci-dessus.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 4. Enregistrer button */}
+                      <button
+                        onClick={handleSaveStoryTypography}
+                        disabled={savingNode}
+                        className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold py-4 rounded-xl text-xs uppercase tracking-widest transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-500/10 active:scale-[0.99] disabled:opacity-50"
+                      >
+                        {savingNode ? (
+                          <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                        ) : (
+                          <Check className="w-4 h-4 text-slate-950" />
+                        )}
+                        <span>Sauvegarder l’Identité Graphique</span>
+                      </button>
+
+                    </div>
+
+                    {/* Live preview column */}
+                    <div className="xl:col-span-2 flex flex-col gap-4">
+                      
+                      <div className="bg-slate-950 p-4 border border-slate-900 rounded-2xl flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-bold text-indigo-400 uppercase tracking-widest">Aide de Plume</span>
+                        <span className="text-[9px] text-slate-500">Mise à jour en temps réel</span>
+                      </div>
+
+                      {/* Immersive Preview Book Card structure */}
+                      <div className="border border-slate-800 rounded-3xl p-6 md:p-8 bg-[#0F1117] h-full flex flex-col justify-between shadow-2xl relative select-none overflow-hidden min-h-[460px]">
+                        
+                        {/* Motif highlights */}
+                        <div className="absolute top-0 right-4 p-4 opacity-5 font-serif text-[100px] leading-none pointer-events-none select-none text-slate-300">
+                          §
+                        </div>
+
+                        <div>
+                          {/* Genre & author names */}
+                          <div className="flex flex-col gap-1 pb-4 border-b border-slate-900">
+                            <span className="text-[8px] font-mono uppercase tracking-[0.2em] text-amber-500 font-bold">Aperçu en temps réel (Atelier)</span>
+                            <span className="text-[10px] italic text-slate-400 font-serif">Une œuvre de {writingStory.authorName}</span>
+                          </div>
+
+                          {/* Chapters and text mockup preview */}
+                          <div className="mt-6 flex flex-col gap-4">
+                            {/* Title displayed in chosen custom font! */}
+                            <h2 
+                              className="text-2xl md:text-3xl text-slate-100 tracking-tight leading-tight transition-all duration-300 animate-pulse-subtle"
+                              style={{ 
+                                fontFamily: getFontCssValue(storyTitleFont), 
+                                fontWeight: storyTitleFontWeight === "normal" ? "400" : storyTitleFontWeight === "medium" ? "500" : storyTitleFontWeight === "bold" ? "700" : "900" 
+                              }}
+                            >
+                              {writingStory.title}
+                            </h2>
+                            
+                            <p className="text-[9px] text-[#A3A3A3] font-serif leading-normal uppercase tracking-widest border-b border-slate-900 pb-2">
+                              {editingNode ? `CHAPITRE : ${editingNode.title}` : "CHAPITRE I - L'AVENTURE"}
+                            </p>
+
+                            {/* Simulated content text */}
+                            <div className="text-xs text-slate-350 leading-relaxed font-serif space-y-3 pt-2">
+                              <p>
+                                <span className="float-left text-3xl font-bold text-amber-500 mr-2 font-serif leading-none mt-1">L</span>
+                                {editingNode && editingNode.content ? (
+                                  editingNode.content.length > 200 ? editingNode.content.slice(0, 200) + "..." : editingNode.content
+                                ) : "e manuscrit Stilova se drape de matières d'ombres sous vos yeux. Gravez les embranchements et décorez l'ensemble."}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Live dynamic Signature rendering */}
+                        <div className="border-t border-slate-900 mt-12 pt-6">
+                          {storyAutoSignatureEnabled ? (
+                            chapterSignatureEnabled ? (
+                              /* Custom active Chapter override rendering */
+                              <div 
+                                className={`flex flex-col gap-1 transition-all duration-300`}
+                                style={{ 
+                                  fontFamily: getFontCssValue(chapterSignatureFont),
+                                  color: getColorHex(chapterSignatureColor),
+                                  textAlign: chapterSignatureAlign as any
+                                }}
+                              >
+                                {chapterSignatureText ? (
+                                  chapterSignatureText.split('\n').map((line, idx) => (
+                                    <span 
+                                      key={idx} 
+                                      className={`${idx === 0 ? "text-base sm:text-lg italic" : "text-sm font-semibold opacity-90 block mt-1"}`}
+                                    >
+                                      {line}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-slate-500 text-[10px] italic">Aucune signature sur-mesure saisie...</span>
+                                )}
+                              </div>
+                            ) : (
+                              /* Global auto signature template rendering */
+                              <div 
+                                className={`flex flex-col gap-1 transition-all duration-300`}
+                                style={{ 
+                                  fontFamily: getFontCssValue(storySignatureFont),
+                                  color: getColorHex(storySignatureColor),
+                                  textAlign: storySignatureAlign as any
+                                }}
+                              >
+                                {storyDefaultSignature.split('\n').map((line, idx) => (
+                                  <span 
+                                    key={idx} 
+                                    className={`${idx === 0 ? "text-base sm:text-lg italic" : "text-sm font-semibold opacity-90 block mt-1"}`}
+                                  >
+                                    {line}
+                                  </span>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            <div className="text-center">
+                              <span className="text-[10px] text-slate-600 italic block font-mono">
+                                [Signature automatique désactivée]
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="lg:col-span-2 bg-slate-900/20 border border-dashed border-slate-800 rounded-3xl p-16 text-center text-slate-500 text-xs self-start">
+                <Compass className="w-10 h-10 text-slate-600 mx-auto mb-2.5" />
+                <h4 className="font-bold text-slate-400">Atelier d'Auteur Stilova</h4>
+                <p className="mt-1 max-w-sm mx-auto leading-relaxed">
+                  Sélectionnez ou créez un livre interactif pour commencer à graver, lier les chapitres par des embranchements ou publier vos chefs-d'œuvre.
+                </p>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.9 MODERATION SCREEN PANEL                         */}
+        {/* ==================================================== */}
+        {route === "mods" && currentUser && (currentUser.role === "admin" || currentUser.role === "moderator") && (
+          <AdminPanel
+            stories={stories}
+            onRefreshStories={refreshStoryCatalog}
+          />
+        )}
+
+      </main>
+
+      {/* ==================================================== */}
+      {/* 3. PROTECTED CONTENT POPUP ATTEMPT / LOCK MODAL      */}
+      {/* ==================================================== */}
+      {isProtectedModalOpen && (
+        <div className="fixed inset-0 bg-[#0B0C0E]/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="w-full max-w-md bg-[#0F1117] border border-amber-500/30 rounded-3xl p-6 md:p-8 flex flex-col items-center text-center gap-6 shadow-2xl relative">
+            
+            {/* Glowing locks motif */}
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <Zap className="w-7 h-7 text-amber-500 animate-pulse" />
+            </div>
+
+            {/* Main Warning message request */}
+            <div className="flex flex-col gap-1.5">
+              <h3 className="font-sans font-black text-xl text-slate-100 uppercase tracking-tight">
+                🔒 REJOIGNEZ LE CERCLE STILOVA
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed font-sans font-medium mt-1">
+                "Créez un compte gratuitement pour enregistrer votre progression et rejoindre la communauté Stilova."
+              </p>
+            </div>
+
+            <p className="text-[11px] text-slate-500 max-w-xs font-light">
+              Les visiteurs publics peuvent lire librement les chapitres d'introduction. L'écriture en direct, le vote l'évaluation, les favoris et la sauvegarde hors-ligne nécessitent une signature d'auteur sur la blockchain Stilova.
+            </p>
+
+            {/* Actions CTA */}
+            <div className="flex flex-col gap-2.5 w-full mt-1">
+              <button
+                onClick={() => {
+                  setIsProtectedModalOpen(false);
+                  setIsSigningUp(true);
+                  setRoute("register");
+                }}
+                className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold py-3.5 rounded-2xl text-xs uppercase tracking-widest cursor-pointer transition shadow-lg shadow-amber-500/5 hover:scale-101"
+              >
+                Créer un compte d'auteur (Gratuit)
+              </button>
+              
+              <button
+                onClick={() => {
+                  setIsProtectedModalOpen(false);
+                  setIsSigningUp(false);
+                  setRoute("login");
+                }}
+                className="w-full bg-slate-950 border border-slate-800 text-slate-305 font-sans font-semibold py-3 px-4 rounded-2xl text-xs cursor-pointer transition text-slate-400 hover:text-white"
+              >
+                Déjà membre ? Se connecter
+              </button>
+
+              <button
+                onClick={() => setIsProtectedModalOpen(false)}
+                className="text-[10px] font-mono text-slate-500 hover:text-slate-300 underline cursor-pointer mt-1"
+              >
+                Continuer l'exploration libre
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 4. ATELIER BOOK CREATION FORM MODAL                  */}
+      {/* ==================================================== */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 flex flex-col gap-5 shadow-2xl relative">
+            
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-sans font-bold text-slate-100 text-base md:text-lg">Graver une nouvelle œuvre</h3>
+                <p className="text-[11px] text-slate-400">Commencez l'écriture de votre voyage littéraire interactif.</p>
+              </div>
+              <button 
+                onClick={() => setIsCreateModalOpen(false)}
+                className="text-slate-500 hover:text-slate-300 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateBook} className="flex flex-col gap-4">
+              
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-slate-405 font-bold uppercase">Titre du livre d'or</label>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="Ex: Les Tambours du fleuve futur"
+                  required
+                  className="bg-slate-950 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-slate-100 outline-none w-full"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-slate-400 font-bold uppercase">Description / Résumé</label>
+                <textarea
+                  value={newDesc}
+                  onChange={(e) => setNewDesc(e.target.value)}
+                  placeholder="Écrivez le résumé poétique officiel pour la bibliothèque..."
+                  required
+                  rows={3}
+                  className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-xs text-slate-100 outline-none w-full resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold uppercase">Univers Panafricain</label>
+                  <select
+                    value={newGenre}
+                    onChange={(e) => setNewGenre(e.target.value as AfricanGenre)}
+                    className="bg-slate-950 border border-slate-800 py-2.5 px-3 rounded-xl text-xs text-slate-250 outline-none cursor-pointer"
+                  >
+                    <option value="afrofuturism">🚀 Afrofuturisme</option>
+                    <option value="mythology">🔱 Mythologie</option>
+                    <option value="historical">📜 Chronique Historique</option>
+                    <option value="romance">💖 Roman d'amour</option>
+                    <option value="drama">🎭 Drame Social</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold uppercase font-mono">Format</label>
+                  <select
+                    value={newIsInteractive ? "yes" : "no"}
+                    onChange={(e) => setNewIsInteractive(e.target.value === "yes")}
+                    className="bg-slate-950 border border-slate-800 py-2.5 px-3 rounded-xl text-xs text-slate-200 outline-none cursor-pointer"
+                  >
+                    <option value="yes">🎮 Livre Interactif (Choix multiple)</option>
+                    <option value="no">📖 Récit Linéaire classique</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-slate-400 font-bold uppercase">URL de l'image de couverture</label>
+                <input
+                  type="url"
+                  value={newCover}
+                  onChange={(e) => setNewCover(e.target.value)}
+                  placeholder="Ex : https://images.unsplash.com/..."
+                  className="bg-slate-950 border border-slate-850 px-3.5 py-2.5 rounded-xl text-xs text-slate-100 outline-none w-full"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3 px-4 rounded-xl text-xs transition cursor-pointer mt-2"
+              >
+                Graver l'œuvre initiale
+              </button>
+
+            </form>
+
+          </div>
+        </div>
+      )}
+
+      {/* Modern Aesthetic Credits line (No Tech-Larping, simple, humble and literal footer) */}
+      <footer className="border-t border-slate-900 pt-8 mt-16 text-center text-xs text-slate-500">
+        <div>© 2026 Stilova. Panafrican Immersive Literature Platform.</div>
+      </footer>
+
+    </div>
+  );
+}

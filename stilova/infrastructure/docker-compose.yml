@@ -1,0 +1,94 @@
+version: '3.8'
+
+# ##################################################################
+# STILOVA LOCAL INFRASTRUCTURE & APPLICATION SUITE
+# ##################################################################
+
+services:
+  # =============================================================
+  # PRIMARY PostgreSQL DATA STORAGE ENGINE
+  # =============================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: stilova_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-stilova_prod_db}
+      POSTGRES_USER: ${DB_USER:-stilova_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-stilova_db_secret_pwd}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - stilova_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stilova_admin -d stilova_prod_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # =============================================================
+  # CENTRAL CACHING & BACKEND WORKQUEUE (REDIS)
+  # =============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: stilova_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret_pwd}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - stilova_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret_pwd", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # =============================================================
+  # UNIFIED NestJS BACKEND CONTROLLER APIS
+  # =============================================================
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: stilova_backend
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${DB_USER:-stilova_admin}:${DB_PASSWORD:-stilova_db_secret_pwd}@postgres:5432/${DB_NAME:-stilova_prod_db}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_pwd}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-jwt_prod_access_secret_stilova_2026}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-jwt_prod_refresh_secret_stilova_2026}
+    ports:
+      - "3000:3000"
+    networks:
+      - stilova_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+
+# =============================================================
+# PERSISTENT ENVIRONMENT STORAGE DECLARATIONS
+# =============================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# =============================================================
+# HARDENED NETWORKING SPECIFICATION
+# =============================================================
+networks:
+  stilova_network:
+    driver: bridge

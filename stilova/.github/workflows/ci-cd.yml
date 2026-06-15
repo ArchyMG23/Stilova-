@@ -1,0 +1,160 @@
+name: STILOVA CI/CD WORKFLOW
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # =============================================================
+  # JOB 1 : BACKEND VALIDATIONS & COMPILATION
+  # =============================================================
+  backend-validation:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: stilova_test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: root_secure_pwd
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+    - name: Checkout Codebase
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js 18.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+        cache: 'npm'
+        cache-dependency-path: './stilova/backend/package-lock.json'
+
+    - name: Install Monorepo Dependencies
+      run: |
+        cd stilova/backend
+        npm ci
+
+    - name: Lint Rules Verification
+      run: |
+        cd stilova/backend
+        npm run lint
+
+    - name: Generate Prisma Client & Database Migration Setup
+      run: |
+        cd stilova/backend
+        npx prisma generate
+      env:
+        DATABASE_URL: postgresql://postgres:root_secure_pwd@localhost:5432/stilova_test_db?schema=public
+
+    - name: Execute Backend Tests & Coverage (Threshold: 80%)
+      run: |
+        cd stilova/backend
+        npm run test:cov
+      env:
+        DATABASE_URL: postgresql://postgres:root_secure_pwd@localhost:5432/stilova_test_db?schema=public
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+    - name: Compile NestJS Application
+      run: |
+        cd stilova/backend
+        npm run build
+
+  # =============================================================
+  # JOB 2 : FLUTTER VALIDATIONS & MOBILE COMPILATION
+  # =============================================================
+  mobile-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Codebase
+      uses: actions/checkout@v3
+
+    - name: Install Java Environment (Android Target SDK support)
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'zulu'
+        java-version: '12.x'
+
+    - name: Set up Flutter SDK Environment
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+        flutter-version: '3.19.x'
+
+    - name: Install Flutter Packages
+      run: |
+        cd stilova/mobile
+        flutter pub get
+
+    - name: Verify Code Style Formatting
+      run: |
+        cd stilova/mobile
+        flutter format --set-exit-if-changed lib/
+
+    - name: Static Code Analysis (Strict Warnings Check)
+      run: |
+        cd stilova/mobile
+        flutter analyze
+
+    - name: Execute Flutter Widget Tests
+      run: |
+        cd stilova/mobile
+        flutter test
+
+    - name: Compile Android Release Bundle (AAB) & Flutter Web Client
+      run: |
+        cd stilova/mobile
+        flutter build web --release
+        flutter build appbundle --release --no-shrink
+
+  # =============================================================
+  # JOB 3 : DOCKER BUILD & AWS ECR SHIPPING (RELEASE PHASE)
+  # =============================================================
+  release-deployment:
+    needs: [backend-validation, mobile-validation]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout Codebase
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-3
+
+    - name: Log in to AWS ECR Core Registry
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, Tag and Push Backend image to AWS Elastic Container Registry (ECR)
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: stilova-backend
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f stilova/backend/Dockerfile stilova/backend
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+    - name: Deploy AWS ECS Fargate Task Definition Update
+      run: |
+        aws ecs update-service --cluster stilova-production-cluster --service backend-service --force-new-deployment
