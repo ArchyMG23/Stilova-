@@ -1,4 +1,4 @@
-export type UserRole = "VISITOR" | "READER" | "AUTHOR" | "MODERATOR" | "ADMIN" | "SUPER_ADMIN" | "FOUNDER_OWNER";
+export type UserRole = "VISITOR" | "READER" | "AUTHOR" | "EDITOR" | "MODERATOR" | "ADMIN" | "SUPER_ADMIN" | "FOUNDER_OWNER";
 
 export type AfricanGenre = "afrofuturism" | "mythology" | "romance" | "drama" | "historical";
 

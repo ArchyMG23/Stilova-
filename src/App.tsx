@@ -18,12 +18,20 @@ import ReaderView from "./components/ReaderView";
 import ContestsView from "./components/ContestsView";
 import AdminPanel from "./components/AdminPanel";
 import StoryDetailView from "./components/StoryDetailView";
+import UserProfileView from "./components/UserProfileView";
+import BibliothequeView from "./components/BibliothequeView";
+import ModerationPanel from "./components/ModerationPanel";
+import AdministrationPanel from "./components/AdministrationPanel";
+import EditorialPanel from "./components/EditorialPanel";
+import CoverUploader from "./components/CoverUploader";
+import RoleDashboards from "./components/RoleDashboards";
+import { motion } from "motion/react";
 
 import { 
   Trophy, BookOpen, PenTool, ShieldAlert, LogOut, User, Sparkles, 
   RefreshCw, Plus, Edit2, Play, Check, AlertCircle, Heart, Trash2, 
-  HelpCircle, Star, Eye, Compass, Flame, ShieldCheck, ArrowRight, CornerDownRight, Zap,
-  Sliders, Type, Palette
+  HelpCircle, Star, Eye, EyeOff, Compass, Flame, ShieldCheck, ArrowRight, CornerDownRight, Zap,
+  Sliders, Type, Palette, Home, Shield, Activity, Settings, Key, FolderHeart, BarChart3, Lock, BookMarked
 } from "lucide-react";
 
 // AVATAR PRESETS list for immersive onboarding 
@@ -76,10 +84,84 @@ export default function App() {
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_PRESETS[0].url);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Password rules validation states
+  const isLengthValid = password.length >= 8;
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const hasSpecial = /[^A-Za-z0-9]/.test(password);
+  const isPasswordSecure = isLengthValid && hasUppercase && hasLowercase && hasNumber && hasSpecial;
 
   // New Immersive Unified Route System:
-  // "landing" | "discover" | "contests" | "profiles" | "login" | "register" | "atelier" | "mods" | "story-detail"
+  // "landing" | "discover" | "contests" | "profiles" | "login" | "register" | "atelier" | "mods" | "story-detail" | "profile" | "my-library" | "author-stats" | "admin-panel" | "audit"
   const [route, setRoute] = useState<string>("landing");
+
+  // Dynamic Router Protection Logic (Côté Routeur & RBAC Sécurisation)
+  const changeRoute = (targetRoute: string) => {
+    if (currentUser?.suspended || currentUser?.banned) {
+      setRoute("suspended");
+      return;
+    }
+
+    const requiresAuth = ["my-library", "profile", "atelier", "mods", "author-stats", "admin-panel", "audit", "admin", "moderation"].includes(targetRoute);
+    if (requiresAuth && !currentUser) {
+      setIsProtectedModalOpen(true);
+      return;
+    }
+
+    let hasRolePermission = true;
+    if (currentUser) {
+      const role = currentUser.role;
+      if (targetRoute === "atelier") {
+        hasRolePermission = ["AUTHOR", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      } else if (targetRoute === "mods" || targetRoute === "moderation") {
+        hasRolePermission = ["MODERATOR", "ADMIN", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      } else if (targetRoute === "admin-panel" || targetRoute === "admin") {
+        hasRolePermission = ["ADMIN", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      } else if (targetRoute === "author-stats") {
+        hasRolePermission = ["AUTHOR", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      } else if (targetRoute === "audit") {
+        hasRolePermission = ["SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      }
+    } else {
+      if (requiresAuth) {
+        hasRolePermission = false;
+      }
+    }
+
+    if (!hasRolePermission) {
+      console.warn(`[Stilova Router Security Bypass Blocked] Tentative d'accès à la route "${targetRoute}" par le rôle: ${currentUser?.role || "VISITOR"}`);
+      setRoute("landing");
+      return;
+    }
+
+    // Clear active selections if routing away
+    if (targetRoute !== "story-detail" && targetRoute !== "reader") {
+      setSelectedWorkId(null);
+      setActiveStoryId(null);
+    }
+
+    setRoute(targetRoute);
+  };
+
+  // Predictive Warmup Prefetching on Hover
+  const prefetchRouteData = (targetRoute: string) => {
+    try {
+      if (targetRoute === "discover" || targetRoute === "my-library") {
+        dbService.listStories();
+      } else if (targetRoute === "contests") {
+        dbService.listCompetitions();
+      } else if (["admin", "moderation", "audit"].includes(targetRoute)) {
+        dbService.listProfiles();
+        dbService.listCompetitions();
+        dbService.listAuditLogs();
+      }
+    } catch (e) {
+      // Background silent fallback
+    }
+  };
   
   // Library datasets
   const [stories, setStories] = useState<Story[]>([]);
@@ -102,6 +184,9 @@ export default function App() {
   const [newGenre, setNewGenre] = useState<AfricanGenre>("afrofuturism");
   const [newCover, setNewCover] = useState("");
   const [newIsInteractive, setNewIsInteractive] = useState(true);
+  const [isCreatingBook, setIsCreatingBook] = useState(false);
+  const [bookCreationError, setBookCreationError] = useState<string | null>(null);
+  const [creationProgress, setCreationProgress] = useState(0);
 
   // New chapter node forms
   const [newNodeTitle, setNewNodeTitle] = useState("");
@@ -143,27 +228,41 @@ export default function App() {
     // 3. Monitor Firebase session signature
     const unsub = onAuthStateChanged(auth, async (user) => {
       setAuthLoading(true);
+      
+      // Helper to easily run promises with timeouts to prevent hanging on network/iframe blockages
+      const runWithTimeout = async <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+        return Promise.race([
+          promise,
+          new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+        ]);
+      };
+
       try {
         if (user) {
-          // Attempt cloud sync if online
+          // Attempt cloud sync if online (1.5 seconds max wait time)
           try {
-            await seedCloudFirestore();
+            await runWithTimeout(seedCloudFirestore(), 1500, undefined);
           } catch (seedError) {
             console.warn("[Stilova Startup] Firestore seeding deferred/offline:", seedError);
           }
 
           let profile = null;
           try {
-            profile = await dbService.getProfile(user.uid);
+            // Retrieve profile with a 2-second timeout (falls back to null or cache internally/externally)
+            profile = await runWithTimeout(dbService.getProfile(user.uid), 2000, null);
             if (profile && user.email) {
               const emailLower = user.email.toLowerCase();
-              const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
-              if (emailLower === OWNER_EMAIL) {
+              const OWNER_EMAIL = (
+                (((import.meta as any).env || {}).VITE_OWNER_EMAIL) || 
+                (((import.meta as any).env || {}).OWNER_EMAIL) || 
+                "gabrielyombi311@gmail.com"
+              ).toLowerCase();
+              if (emailLower === OWNER_EMAIL || emailLower === "gabrielyombi311@gmail.com") {
                 if (profile.role !== "FOUNDER_OWNER") {
                   profile.role = "FOUNDER_OWNER";
-                  await dbService.saveProfile(profile);
+                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
                   // Audit log for security verification
-                  await dbService.saveAuditLog({
+                  await runWithTimeout(dbService.saveAuditLog({
                     id: "audit_" + Date.now(),
                     action: "FOUNDER_AUTO_ASSIGN",
                     performedBy: user.uid,
@@ -172,18 +271,18 @@ export default function App() {
                     targetUserName: profile.displayName || user.email,
                     details: "FOUNDER_OWNER role auto-claimed on login by email match.",
                     timestamp: new Date().toISOString()
-                  });
+                  }), 1500, undefined);
                 }
               } else if (emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi")) {
                 if (profile.role !== "SUPER_ADMIN" && profile.role !== "FOUNDER_OWNER") {
                   profile.role = "SUPER_ADMIN";
-                  await dbService.saveProfile(profile);
+                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
                 }
               } else if (profile.role === "admin" || (profile.role as string) === "writer" || (profile.role as string) === "reader" || (profile.role as string) === "moderator") {
                 // Auto-upgrade legacy roles to modern uppercase format
                 const upRole = (profile.role as string).toUpperCase();
                 profile.role = upRole === "WRITER" ? "AUTHOR" : upRole as UserRole;
-                await dbService.saveProfile(profile);
+                await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
               }
             }
           } catch (profileError) {
@@ -191,10 +290,10 @@ export default function App() {
           }
 
           if (!profile) {
-            // Determine if first user registered in system to assign SUPER_ADMIN
+            // Determine if first user registered in system to assign SUPER_ADMIN (1.5 seconds max wait time)
             let isFirstUser = false;
             try {
-              const profilesList = await dbService.listProfiles();
+              const profilesList = await runWithTimeout(dbService.listProfiles(), 1500, []);
               if (profilesList.length === 0) {
                 isFirstUser = true;
               }
@@ -204,8 +303,12 @@ export default function App() {
 
             // If profile is absent, build default profile
             const emailLower = (user.email || "").toLowerCase();
-            const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
-            const isFounder = emailLower === OWNER_EMAIL;
+            const OWNER_EMAIL = (
+              (((import.meta as any).env || {}).VITE_OWNER_EMAIL) || 
+              (((import.meta as any).env || {}).OWNER_EMAIL) || 
+              "gabrielyombi311@gmail.com"
+            ).toLowerCase();
+            const isFounder = emailLower === OWNER_EMAIL || emailLower === "gabrielyombi311@gmail.com";
             const isAdminOrSuper = emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi") || isFirstUser;
             
             let roleToAssign: UserRole = "READER";
@@ -239,7 +342,7 @@ export default function App() {
               banned: false
             };
             try {
-              await dbService.saveProfile(profile);
+              await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
             } catch (saveError) {
               console.warn("[Stilova Startup] Cloud profile preservation skipped:", saveError);
             }
@@ -291,7 +394,10 @@ export default function App() {
     if (!email || !password) return;
 
     try {
-      if (isSigningUp) {
+      if (route === "register") {
+        if (!isPasswordSecure) {
+          throw new Error("Votre mot de passe ne respecte pas l'ensemble des règles de sécurité obligatoires.");
+        }
         // Sign Up Flow
         await createUserWithEmailAndPassword(auth, email, password);
       } else {
@@ -304,12 +410,17 @@ export default function App() {
   };
 
   const handleDemoBypass = () => {
-    const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
-    const isFounder = (email || "yombivictor@gmail.com").toLowerCase() === OWNER_EMAIL;
+    const OWNER_EMAIL = (
+      (((import.meta as any).env || {}).VITE_OWNER_EMAIL) || 
+      (((import.meta as any).env || {}).OWNER_EMAIL) || 
+      "gabrielyombi311@gmail.com"
+    ).toLowerCase();
+    const testEmail = (email || OWNER_EMAIL).toLowerCase();
+    const isFounder = testEmail === OWNER_EMAIL || testEmail === "gabrielyombi311@gmail.com";
     const demoProfile: UserProfile = {
       uid: "offline_demo_user",
-      displayName: displayName || "Archy",
-      email: email || "yombivictor@gmail.com",
+      displayName: displayName || (isFounder ? "Gabriel" : "Archy"),
+      email: testEmail,
       role: isFounder ? "FOUNDER_OWNER" : "ADMIN",
       bio: "Mode d'urgence local activé suite à une erreur Firebase Auth.",
       favoriteGenres: ["afrofuturism"],
@@ -372,16 +483,39 @@ export default function App() {
   // Create new book story record in database
   const handleCreateBook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !newTitle) return;
+    if (!currentUser) return;
+    if (!newTitle.trim()) {
+      setBookCreationError("Veuillez renseigner le titre de l'œuvre.");
+      return;
+    }
+    if (!newDesc.trim()) {
+      setBookCreationError("Veuillez renseigner le résumé de l'œuvre.");
+      return;
+    }
+
+    setIsCreatingBook(true);
+    setBookCreationError(null);
+    setCreationProgress(10);
 
     try {
+      // Step 1: Validate author permissions
+      const role = currentUser.role;
+      const possessesRights = ["AUTHOR", "MODERATOR", "ADMIN", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
+      if (!possessesRights) {
+        throw new Error("Défaut de droits d'écriture : seuls les écrivains accrédités peuvent graver.");
+      }
+
+      await new Promise(r => setTimeout(r, 350));
+      setCreationProgress(30);
+
+      // Step 2: Assemble the Story metadata
       const randomCover = newCover || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300";
       const bookId = `story_${Date.now()}`;
       
       const newBook: Story = {
         id: bookId,
-        title: newTitle,
-        description: newDesc,
+        title: newTitle.trim(),
+        description: newDesc.trim(),
         coverUrl: randomCover,
         genre: newGenre,
         authorId: currentUser.uid,
@@ -396,9 +530,16 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
+      await new Promise(r => setTimeout(r, 350));
+      setCreationProgress(55);
+
+      // Save Story to DB
       await dbService.saveStory(newBook);
       
-      // Auto-create a stub first chapter root node for the interactive story
+      await new Promise(r => setTimeout(r, 350));
+      setCreationProgress(75);
+
+      // Auto-create a stub first chapter root node for the story
       const firstChapterNode: StoryNode = {
         id: `node_root_${Date.now()}`,
         storyId: bookId,
@@ -412,17 +553,42 @@ export default function App() {
 
       await dbService.saveStoryNode(firstChapterNode);
 
+      await new Promise(r => setTimeout(r, 350));
+      setCreationProgress(90);
+
+      // Save admin audit trace
+      const auditDetails = `Création de l'œuvre "${newBook.title}" (ID: ${bookId}).`;
+      const logId = "log_" + Date.now();
+      await dbService.saveAuditLog({
+        id: logId,
+        action: "CREATION_OEUVRE_GRAVEE",
+        performedBy: currentUser.uid,
+        performedByName: currentUser.displayName,
+        targetUserId: currentUser.uid,
+        targetUserName: currentUser.displayName,
+        details: auditDetails,
+        timestamp: new Date().toISOString()
+      });
+
       // Reset Form fields
       setNewTitle("");
       setNewDesc("");
       setNewCover("");
-      setIsCreateModalOpen(false);
       
       await refreshStoryCatalog();
+      
+      setCreationProgress(100);
+      await new Promise(r => setTimeout(r, 150));
+      
+      setIsCreateModalOpen(false);
+      
       // Auto focus writing to this story
       handleFocusStoryAtelier(newBook);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Book creation failed", err);
+      setBookCreationError(err?.message || "Une erreur imprévue a refusé l'écriture de l'œuvre.");
+    } finally {
+      setIsCreatingBook(false);
     }
   };
 
@@ -652,7 +818,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0C0E] text-[#E0E0E0] font-sans pb-10 flex flex-col relative border-b border-slate-900">
       
       {/* 1. IMMERSIVE BRAND HEADER NAVIGATION */}
-      <header className="h-16 border-b border-slate-800 bg-[#0F1117] flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40 backdrop-blur-md">
+      <header className="h-16 border-b border-slate-800/60 bg-[#0F1117]/85 flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40 backdrop-blur-md shadow-sm">
         <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-4">
           
           {/* Logo brand */}
@@ -660,7 +826,7 @@ export default function App() {
             onClick={() => { setRoute("landing"); setActiveStoryId(null); setSelectedWorkId(null); }}
             className="flex items-center gap-3 cursor-pointer group shrink-0"
           >
-            <div className="w-10 h-10 rounded-full border border-amber-500/30 overflow-hidden flex items-center justify-center bg-slate-950 transition duration-300 group-hover:scale-105 shadow-md shadow-amber-500/10">
+            <div className="w-10 h-10 rounded-full border border-amber-500/30 overflow-hidden flex items-center justify-center bg-slate-950 transition duration-300 group-hover:scale-105 group-hover:border-amber-400 shadow-md shadow-amber-500/10">
               <img
                 src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
                 alt="Stilova"
@@ -669,86 +835,120 @@ export default function App() {
               />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-base font-bold tracking-widest text-white group-hover:text-amber-500 transition font-sans leading-none">STILOVA</h1>
+              <h1 className="text-base font-bold tracking-widest text-white group-hover:text-amber-400 transition font-sans leading-none">STILOVA</h1>
               <span className="text-[9px] uppercase tracking-[0.2em] text-[#D97706]/90 font-mono mt-1">ÉCRIRE POUR EXISTER</span>
             </div>
           </div>
 
-          {/* Navigation Links for Visitors and Members and Admins */}
-          <nav className="flex items-center gap-1 sm:gap-2">
-            
-            <button
-              onClick={() => { setRoute("discover"); setActiveStoryId(null); setSelectedWorkId(null); }}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                route === "discover" || route === "story-detail"
-                  ? "bg-amber-500 text-black font-extrabold"
-                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
-              }`}
-            >
-              <Compass className="w-4 h-4" />
-              <span className="hidden md:inline">Découvrir</span>
-            </button>
+          {/* Navigation Links with unified capsule design & interactive sliding motion background */}
+          <nav className="flex items-center gap-1 sm:gap-1.5 bg-slate-950/40 p-1.5 rounded-2xl border border-slate-850/60 backdrop-blur-sm shadow-inner">
+            {(() => {
+              const role = currentUser?.role || "VISITOR";
+              let menuItems = [
+                { label: "Accueil", route: "landing", icon: Home },
+                { label: "Découvrir", route: "discover", icon: Compass },
+                { label: "Catalogue", route: "discover", icon: BookOpen },
+                { label: "Concours", route: "contests", icon: Trophy },
+              ];
 
-            <button
-              onClick={() => { setRoute("contests"); setActiveStoryId(null); setSelectedWorkId(null); }}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                route === "contests"
-                  ? "bg-amber-500 text-black font-extrabold"
-                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
-              }`}
-            >
-              <Trophy className="w-4 h-4" />
-              <span className="hidden md:inline">Défis & Concours</span>
-            </button>
+              if (role === "READER") {
+                menuItems = [
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              } else if (role === "AUTHOR") {
+                menuItems = [
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Mes Histoires", route: "atelier", icon: PenTool },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              } else if (role === "EDITOR") {
+                menuItems = [
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Comité Édito", route: "editorial", icon: BookMarked },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              } else if (role === "MODERATOR") {
+                menuItems = [
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Modération", route: "moderation", icon: ShieldAlert },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              } else if (role === "ADMIN") {
+                menuItems = [
+                   { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Administration", route: "admin", icon: Sliders },
+                  { label: "Modération", route: "moderation", icon: ShieldAlert },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              } else if (role === "SUPER_ADMIN" || role === "FOUNDER_OWNER") {
+                menuItems = [
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Bibliothèque", route: "my-library", icon: BookOpen },
+                  { label: "Écriture", route: "atelier", icon: PenTool },
+                  { label: "Administration", route: "admin", icon: Sliders },
+                  { label: "Modération", route: "moderation", icon: ShieldAlert },
+                  { label: "Concours", route: "contests", icon: Trophy },
+                  { label: "Mon Profil", route: "profile", icon: User },
+                ];
+              }
 
-            <button
-              onClick={() => { setRoute("profiles"); setActiveStoryId(null); setSelectedWorkId(null); }}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                route === "profiles"
-                  ? "bg-amber-500 text-black font-extrabold"
-                  : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
-              }`}
-            >
-              <User className="w-4 h-4" />
-              <span className="hidden md:inline">Profils publics</span>
-            </button>
-
-            {/* Atelier accessible strictly to logged in writers/admins */}
-            {currentUser && (currentUser.role === "AUTHOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
-              <button
-                onClick={() => { setRoute("atelier"); setActiveStoryId(null); setSelectedWorkId(null); }}
-                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                  route === "atelier"
-                    ? "bg-amber-500 text-black font-extrabold"
-                    : "text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/40"
-                }`}
-              >
-                <PenTool className="w-4 h-4" />
-                <span className="hidden md:inline">Mon Atelier</span>
-              </button>
-            )}
-
-            {/* Moderators accessible to moderators and admins */}
-            {currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
-              <button
-                onClick={() => { setRoute("mods"); setActiveStoryId(null); setSelectedWorkId(null); }}
-                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                  route === "mods"
-                    ? "bg-amber-500 text-black font-extrabold"
-                    : "text-[#A3A3A3] hover:text-slate-200 border border-slate-800 bg-slate-900/40"
-                }`}
-              >
-                <ShieldAlert className="w-4 h-4 text-red-500" />
-                <span className="hidden md:inline">Modération</span>
-              </button>
-            )}
+              return menuItems.map((item, idx) => {
+                const IconComponent = item.icon;
+                const isItemActive = route === item.route || (item.route === "discover" && route === "story-detail");
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => changeRoute(item.route)}
+                    onMouseEnter={() => prefetchRouteData(item.route)}
+                    onTouchStart={() => prefetchRouteData(item.route)}
+                    className={`relative px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors duration-200 select-none outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 ${
+                      isItemActive
+                        ? "text-slate-950 font-bold"
+                        : "text-slate-400 hover:text-slate-200 active:scale-95"
+                    }`}
+                  >
+                    {isItemActive && (
+                      <motion.span
+                        layoutId="activeHeaderTab"
+                        className="absolute inset-0 bg-gradient-to-r from-amber-400 to-amber-500 rounded-xl shadow-md shadow-amber-500/15"
+                        transition={{ type: "spring", stiffness: 350, damping: 26 }}
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-1.5">
+                      <IconComponent className="w-3.5 h-3.5" />
+                      <span className="hidden lg:inline">{item.label}</span>
+                    </span>
+                  </button>
+                );
+              });
+            })()}
           </nav>
 
           {/* Right Header Panel (User Profile or Sign buttons) */}
           <div className="flex items-center gap-3 shrink-0 pl-2 border-l border-slate-800">
             {currentUser ? (
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 hidden sm:flex">
+                <div 
+                  onClick={() => changeRoute("profile")}
+                  className="flex items-center gap-2 hidden sm:flex cursor-pointer hover:opacity-80 transition"
+                >
                   <img
                     src={currentUser.avatarUrl}
                     alt={currentUser.displayName}
@@ -771,13 +971,13 @@ export default function App() {
             ) : (
               <div className="flex items-center gap-2">
                 <button 
-                  onClick={() => { setIsSigningUp(false); setRoute("login"); }}
+                  onClick={() => { setIsSigningUp(false); changeRoute("login"); }}
                   className="hidden sm:inline-block px-3 py-1.5 text-xs font-sans text-slate-400 hover:text-[#E0E0E0] font-semibold transition cursor-pointer"
                 >
                   Se connecter
                 </button>
                 <button 
-                  onClick={() => { setIsSigningUp(true); setRoute("register"); }}
+                  onClick={() => { setIsSigningUp(true); changeRoute("register"); }}
                   className="bg-amber-550 hover:bg-amber-400 text-slate-950 font-sans font-bold px-4 py-2 rounded-xl text-xs shadow-md transition scale-100 active:scale-95 cursor-pointer"
                 >
                   S'inscrire
@@ -823,20 +1023,16 @@ export default function App() {
         {route === "landing" && (
           <div className="flex flex-col gap-12 w-full animate-fade-in">
             
-            {/* Giant Hero banner with logo and slogan */}
-            <div className="relative rounded-3xl overflow-hidden border border-slate-800 bg-[#0F1117] p-8 md:p-16 flex flex-col items-center justify-center text-center gap-6 min-h-[460px] shadow-2xl">
-              
-              {/* Absctract gorgeous shining pattern backdrop */}
+            {/* 1. VISITOR HERO BANNER (Global banner style for everyone) */}
+            <div className="relative rounded-3xl overflow-hidden border border-slate-800 bg-[#0F1117] p-8 md:p-16 flex flex-col items-center justify-center text-center gap-6 min-h-[420px] shadow-2xl">
               <div className="absolute inset-0 bg-cover bg-center opacity-10 bg-no-repeat pointer-events-none" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1541701494587-cb58502866ab?auto=format&fit=crop&q=80&w=800')" }} />
               <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-gradient-to-tr from-amber-500/10 via-indigo-950/15 to-transparent filter blur-3xl rounded-full pointer-events-none" />
               
-              {/* Badge */}
               <span className="text-[10px] bg-amber-500/15 border border-amber-500/30 text-amber-500 font-bold px-3 py-1 rounded-full uppercase tracking-widest font-mono">
                 ✨ L'UNIVERS LITTÉRAIRE PANAFRICAIN INTERACTIF
               </span>
 
-              {/* Brand Medallion Logo */}
-              <div className="w-24 h-24 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-2">
+              <div className="w-20 h-20 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-1">
                 <img
                   src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
                   alt="Stilova"
@@ -845,145 +1041,157 @@ export default function App() {
                 />
               </div>
 
-              {/* Logo / Title */}
-              <div className="flex flex-col gap-2">
-                <h1 className="font-sans font-black tracking-widest text-4xl sm:text-7xl text-white">
+              <div className="flex flex-col gap-1">
+                <h1 className="font-sans font-black tracking-widest text-4xl sm:text-6xl text-white">
                   STILOVA
                 </h1>
-                <p className="font-serif italic font-bold text-lg sm:text-2xl text-amber-400 max-w-xl">
+                <p className="font-serif italic font-bold text-base sm:text-lg text-amber-400 max-w-xl">
                   « Le stylet qui grave ton histoire. »
                 </p>
               </div>
 
-              {/* Description */}
               <p className="text-xs sm:text-sm text-slate-400 max-w-2xl font-light leading-relaxed font-sans">
-                Découvrez des centaines de fictions d'Afrofuturisme, récits mythologiques et drames poétiques où <strong>vous êtes le maître des décisions</strong>. Profitez d'une atmosphère sonore d'or et de récits audio générés en live par IA.
+                Découvrez des centaines de fictions d'Afrofuturisme, récits mythologiques et critiques africaines où <strong>vous êtes le maître suprême des décisions</strong>.
               </p>
 
-              {/* CTA buttons */}
-              <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
-                <button
-                  onClick={() => setRoute("discover")}
-                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold py-3.5 px-8 rounded-2xl text-xs uppercase tracking-widest shadow-lg shadow-amber-500/10 cursor-pointer transition transform hover:scale-105 active:scale-95"
-                >
-                  Commencer à lire
-                </button>
-                <button
-                  onClick={() => { setIsSigningUp(true); setRoute("register"); }}
-                  className="bg-slate-950 hover:bg-slate-900 text-slate-200 hover:text-white border border-slate-800 font-sans font-bold py-3.5 px-8 rounded-2xl text-xs cursor-pointer transition"
-                >
-                  Créer un compte d'auteur
-                </button>
-              </div>
-
-              {/* Quiet Signin Link */}
-              <span className="text-[11px] font-mono text-slate-500 mt-2">
-                Déjà membre ?{" "}
-                <button 
-                  onClick={() => { setIsSigningUp(false); setRoute("login"); }}
-                  className="text-amber-550 hover:underline hover:text-amber-400 font-bold cursor-pointer inline-block"
-                >
-                  Se connecter de suite
-                </button>
-              </span>
-            </div>
-
-            {/* Explanation section: Three core pillars */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
-                  <Compass className="w-5 h-5 text-amber-500" />
-                </div>
-                <h3 className="font-sans font-bold text-slate-100 text-sm">Lire gratuitement</h3>
-                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
-                  Explorez et lisez un catalogue riche en culture d'Afrique de l'Ouest, avec des fiches détaillées d'œuvres interactives, librement.
-                </p>
-              </div>
-
-              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
-                  <PenTool className="w-5 h-5 text-amber-500" />
-                </div>
-                <h3 className="font-sans font-bold text-slate-100 text-sm">Écrire ses histoires</h3>
-                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
-                  Devenez auteur de la cour royale ! Concevez vos propres scénarios interactifs et profitez du Copilote de plume virtuel raccordé au réseau.
-                </p>
-              </div>
-
-              <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-550">
-                  <Trophy className="w-5 h-5 text-amber-500" />
-                </div>
-                <h3 className="font-sans font-bold text-slate-100 text-sm">Participer aux concours</h3>
-                <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
-                  Rejoignez l'arène des plumes, soumettez votre livre aux défis en cours et remportez de fabuleuses récompenses physiques et bourses d'écriture.
-                </p>
-              </div>
-            </div>
-
-            {/* Popular Stories Carousel Tray (Netflix/Wattpad style) */}
-            <div className="flex flex-col gap-4 mt-2">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                <span className="text-xs font-bold text-slate-305 uppercase tracking-widest flex items-center gap-1.5">
-                  <Flame className="w-4 h-4 text-amber-500 animate-pulse" />
-                  Histoires Populaires
-                </span>
-                <button 
-                  onClick={() => setRoute("discover")}
-                  className="text-xs text-amber-500 hover:underline font-bold"
-                >
-                  Voir tout le catalogue
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {stories.slice(0, 3).map((story) => (
-                  <div
-                    key={story.id}
-                    onClick={() => handleOpenStoryReader(story.id)}
-                    className="group bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-none p-4 flex gap-4 cursor-pointer transition duration-300"
+              {/* Dynamic CTA depending on connected state */}
+              {!currentUser ? (
+                <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
+                  <button
+                    onClick={() => changeRoute("discover")}
+                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold py-3.5 px-8 rounded-2xl text-xs uppercase tracking-widest shadow-lg shadow-amber-500/10 cursor-pointer transition transform hover:scale-105 active:scale-95"
                   >
-                    <img
-                      src={story.coverUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300"}
-                      alt={story.title}
-                      className="w-20 h-28 object-cover border border-slate-750 group-hover:scale-105 transition duration-300 shrink-0"
-                    />
-                    <div className="flex flex-col justify-between flex-1 min-w-0">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[9px] text-amber-500 bg-slate-950 border border-amber-500/20 w-max px-1.5 py-0.5 font-bold rounded-none uppercase">
-                          {story.genre}
-                        </span>
-                        <h4 className="font-sans font-bold text-slate-105 group-hover:text-amber-400 text-xs sm:text-sm truncate">
-                          {story.title}
-                        </h4>
-                        <span className="text-[10px] text-slate-400 font-serif italic">
-                          Par {story.authorName}
-                        </span>
-                        <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5 leading-relaxed font-sans">
-                          {story.description}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3 text-[9px] font-mono text-slate-400 border-t border-slate-950 pt-2.5">
-                        <span className="flex items-center gap-0.5">
-                          <Eye className="w-3 h-3 text-slate-550" /> {story.viewsCount}
-                        </span>
-                        <span className="flex items-center gap-0.5 text-amber-500">
-                          <Star className="w-3 h-3 fill-current" /> {story.rating}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    Commencer la lecture
+                  </button>
+                  <button
+                    onClick={() => { setIsSigningUp(true); changeRoute("register"); }}
+                    className="bg-slate-950 hover:bg-slate-900 text-slate-200 hover:text-white border border-slate-800 font-sans font-bold py-3.5 px-8 rounded-2xl text-xs cursor-pointer transition"
+                  >
+                    Graver un compte libre
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
+                  <button
+                    onClick={() => changeRoute("discover")}
+                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-sans font-extrabold py-3.5 px-8 rounded-2xl text-xs uppercase tracking-widest shadow-lg cursor-pointer transition transform hover:scale-105 active:scale-95"
+                  >
+                    Parcourir les fictions interactives
+                  </button>
+                  <button
+                    onClick={() => changeRoute("profile")}
+                    className="bg-slate-950 hover:bg-slate-900 text-slate-200 border border-slate-800 font-sans font-bold py-3.5 px-8 rounded-2xl text-xs cursor-pointer transition"
+                  >
+                    Mon sanctuaire d'écriture
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Current Active Battle banner */}
+            {/* ==================================================== */}
+            {/* 2. DYNAMIC HOMEPAGE: VISITOR BOARD                   */}
+            {/* ==================================================== */}
+            {!currentUser && (
+              <div className="flex flex-col gap-10 animate-fade-in">
+                {/* Three Pillars */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
+                      <Compass className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <h3 className="font-sans font-bold text-slate-100 text-sm">Découvrir le Catalogue</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                      Lisez librement un catalogue infini d'œuvres inspirées des contes ancestraux africains.
+                    </p>
+                  </div>
+
+                  <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
+                      <PenTool className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <h3 className="font-sans font-bold text-slate-100 text-sm">Écrire vos fictions</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                      Accédez à notre atelier de narration interactive et profitez des suggestions de l'assistant de plume.
+                    </p>
+                  </div>
+
+                  <div className="bg-[#0F1117] border border-slate-800 p-6 rounded-3xl flex flex-col gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
+                      <Trophy className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <h3 className="font-sans font-bold text-slate-100 text-sm">Remporter la Plume d'Or</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed font-sans font-light">
+                      Soumettez vos chapitres aux concours d'écriture en ligne organisés par la blockchain royale.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Popular Stories */}
+                <div className="flex flex-col gap-4">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="text-xs font-bold text-slate-300 uppercase tracking-widest flex items-center gap-1.5">
+                      <Flame className="w-4 h-4 text-amber-500 animate-pulse" />
+                      Récits en vogue
+                    </span>
+                    <button onClick={() => changeRoute("discover")} className="text-xs text-amber-500 hover:underline font-bold transition">
+                      Tout parcourir
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {stories.slice(0, 3).map((story) => (
+                      <div
+                        key={story.id}
+                        onClick={() => handleOpenStoryReader(story.id)}
+                        className="group bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-3xl p-4 flex gap-4 cursor-pointer transition duration-300 transform hover:-translate-y-1"
+                      >
+                        <img
+                          src={story.coverUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300"}
+                          alt={story.title}
+                          className="w-20 h-28 object-cover border border-slate-800 group-hover:scale-105 transition rounded-xl shrink-0"
+                        />
+                        <div className="flex flex-col justify-between flex-1 min-w-0">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] text-amber-500 bg-slate-950 border border-amber-500/20 w-max px-2 py-0.5 font-bold font-mono uppercase">
+                              {story.genre}
+                            </span>
+                            <h4 className="font-sans font-bold text-slate-100 group-hover:text-amber-500 text-xs sm:text-sm truncate">
+                              {story.title}
+                            </h4>
+                            <span className="text-[10px] text-slate-400 italic">Par {story.authorName}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400 border-t border-slate-950 pt-2">
+                            <span>👁️ {story.viewsCount}</span>
+                            <span className="text-amber-500">⭐ {story.rating}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ==================================================== */}
+            {/* 3. DYNAMIC HOMEPAGES: ROLE DASHBOARDS                */}
+            {/* ==================================================== */}
+            {currentUser && (
+              <RoleDashboards
+                currentUser={currentUser}
+                stories={stories}
+                onRefreshStories={refreshStoryCatalog}
+                changeRoute={changeRoute}
+                handleOpenStoryReader={handleOpenStoryReader}
+              />
+            )}
+
+            {/* Global Active Battle banner for all connected/visitor members */}
             <div className="flex flex-col gap-4 mt-2">
               <span className="text-xs font-bold text-slate-350 uppercase tracking-widest pl-1">
-                🏆 S'élancer dans un concours en cours
+                🏆 Défi & Arène Littéraire Actuels
               </span>
               <div 
-                onClick={() => setRoute("contests")}
+                onClick={() => changeRoute("contests")}
                 className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-transparent border border-slate-800 p-6 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 cursor-pointer hover:border-amber-500/30 transition shadow-lg"
               >
                 <div>
@@ -1283,15 +1491,55 @@ export default function App() {
                 {/* Password secret field */}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] text-slate-400 font-bold uppercase">Mot de passe</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    placeholder="••••••••"
-                    className="bg-slate-950 border border-slate-800 px-4 py-3 rounded-2xl text-xs text-slate-200 outline-none focus:ring-1 focus:ring-amber-500 w-full"
-                  />
+                  <div className="relative w-full">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      placeholder="••••••••"
+                      className="bg-slate-950 border border-slate-800 pl-4 pr-12 py-3 rounded-2xl text-xs text-slate-200 outline-none focus:ring-1 focus:ring-amber-500 w-full"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 focus:outline-none p-1.5 transition"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
+
+                {/* Password norms and guidelines strictly shown when registering */}
+                {route === "register" && (
+                  <div className="bg-slate-950/60 p-3.5 rounded-2xl border border-slate-800/80 flex flex-col gap-2 text-[11px] text-slate-400 mt-1">
+                    <span className="font-bold text-slate-300 text-[10px] uppercase tracking-wider mb-0.5">Normes de sécurité exigées :</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ring-2 ${isLengthValid ? "bg-emerald-500 ring-emerald-500/20" : "bg-slate-700 ring-slate-800"}`} />
+                      <span className={isLengthValid ? "text-emerald-400 font-medium" : "text-slate-400"}>Au moins 8 caractères ({password.length}/8)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ring-2 ${hasUppercase ? "bg-emerald-500 ring-emerald-500/20" : "bg-slate-700 ring-slate-800"}`} />
+                      <span className={hasUppercase ? "text-emerald-400 font-medium" : "text-slate-400"}>Une lettre majuscule (A-Z)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ring-2 ${hasLowercase ? "bg-emerald-500 ring-emerald-500/20" : "bg-slate-700 ring-slate-800"}`} />
+                      <span className={hasLowercase ? "text-emerald-400 font-medium" : "text-slate-400"}>Une lettre minuscule (a-z)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ring-2 ${hasNumber ? "bg-emerald-500 ring-emerald-500/20" : "bg-slate-700 ring-slate-800"}`} />
+                      <span className={hasNumber ? "text-emerald-400 font-medium" : "text-slate-400"}>Au moins un chiffre (0-9)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ring-2 ${hasSpecial ? "bg-emerald-500 ring-emerald-500/20" : "bg-slate-700 ring-slate-800"}`} />
+                      <span className={hasSpecial ? "text-emerald-400 font-medium" : "text-slate-400"}>Un caractère spécial (ex: @, #, $, !, %, *, ?, &)</span>
+                    </div>
+                  </div>
+                )}
 
                 {authError && (
                   <div className="flex flex-col gap-3 p-4 bg-red-950/30 border border-red-900/60 rounded-2xl text-xs">
@@ -1371,6 +1619,22 @@ export default function App() {
 
             </div>
           </div>
+        )}
+
+        {/* ==================================================== */}
+        {/* 2.7 HIGH-END PROFILE & MY LIBRARY WORKSPACE          */}
+        {/* ==================================================== */}
+        {route === "profile" && currentUser && (
+          <UserProfileView 
+            currentUser={currentUser}
+            stories={stories}
+            onProfileUpdate={(updated) => setCurrentUser(updated)}
+            onLogout={handleLogout}
+            onSelectStory={(storyId) => {
+              setSelectedWorkId(storyId);
+              changeRoute("story-detail");
+            }}
+          />
         )}
 
         {/* ==================================================== */}
@@ -2078,10 +2342,33 @@ export default function App() {
         )}
 
         {/* ==================================================== */}
-        {/* 2.9 MODERATION SCREEN PANEL                         */}
+        {/* 2.9 MODERATION & ADMINISTRATION SCREEN PANELS        */}
         {/* ==================================================== */}
-        {route === "mods" && currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
-          <AdminPanel
+        {route === "my-library" && currentUser && (
+          <BibliothequeView
+            stories={stories}
+            onSelectStory={handleOpenStoryReader}
+          />
+        )}
+
+        {route === "moderation" && currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN" || currentUser.role === "FOUNDER_OWNER") && (
+          <ModerationPanel
+            stories={stories}
+            onRefreshStories={refreshStoryCatalog}
+            currentUser={currentUser}
+          />
+        )}
+
+        {route === "admin" && currentUser && (currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN" || currentUser.role === "FOUNDER_OWNER") && (
+          <AdministrationPanel
+            stories={stories}
+            onRefreshStories={refreshStoryCatalog}
+            currentUser={currentUser}
+          />
+        )}
+
+        {route === "editorial" && currentUser && (currentUser.role === "EDITOR" || currentUser.role === "SUPER_ADMIN" || currentUser.role === "FOUNDER_OWNER") && (
+          <EditorialPanel
             stories={stories}
             onRefreshStories={refreshStoryCatalog}
             currentUser={currentUser}
@@ -2227,23 +2514,47 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-slate-400 font-bold uppercase">URL de l'image de couverture</label>
-                <input
-                  type="url"
-                  value={newCover}
-                  onChange={(e) => setNewCover(e.target.value)}
-                  placeholder="Ex : https://images.unsplash.com/..."
-                  className="bg-slate-950 border border-slate-850 px-3.5 py-2.5 rounded-xl text-xs text-slate-100 outline-none w-full"
-                />
-              </div>
+              <CoverUploader
+                currentCoverUrl={newCover}
+                onCoverChanged={(url) => setNewCover(url)}
+                userId={currentUser.uid}
+                userRole={currentUser.role}
+              />
 
-              <button
-                type="submit"
-                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3 px-4 rounded-xl text-xs transition cursor-pointer mt-2"
-              >
-                Graver l'œuvre initiale
-              </button>
+              {bookCreationError && (
+                <div className="border border-red-500/20 bg-red-500/5 text-red-400 text-xs p-3.5 rounded-2xl font-mono text-left">
+                  ⚠ <strong>Échec de gravure :</strong> {bookCreationError}
+                </div>
+              )}
+
+              {isCreatingBook ? (
+                <div className="flex flex-col gap-2 bg-slate-950 p-4 rounded-2xl border border-slate-900 mt-2">
+                  <div className="flex justify-between items-center text-[10.5px]">
+                    <span className="font-sans font-bold text-slate-350 animate-pulse text-left">
+                      {creationProgress <= 35 && "1. Vérification des droits..."}
+                      {creationProgress > 35 && creationProgress <= 65 && "2. Assemblage des métadonnées..."}
+                      {creationProgress > 65 && creationProgress <= 80 && "3. Gravure dans l'urne Firestore..."}
+                      {creationProgress > 80 && creationProgress <= 95 && "4. Génération de l'Introduction..."}
+                      {creationProgress > 95 && "5. Alignement du Catalogue..."}
+                    </span>
+                    <span className="text-amber-500 font-mono font-black">{creationProgress}%</span>
+                  </div>
+
+                  <div className="w-full bg-slate-900 border border-slate-850 h-2.5 rounded-full overflow-hidden p-px">
+                    <div 
+                      className="bg-gradient-to-r from-amber-500 to-amber-600 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${creationProgress}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3.5 px-4 rounded-2xl text-xs uppercase tracking-wider transition cursor-pointer mt-2"
+                >
+                  Graver l'œuvre initiale
+                </button>
+              )}
 
             </form>
 

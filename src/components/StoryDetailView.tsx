@@ -62,6 +62,8 @@ export default function StoryDetailView({
               <img 
                 src={story.coverUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=400"} 
                 alt={story.title}
+                fetchPriority="high"
+                decoding="sync"
                 className="w-full h-full object-cover"
                 onError={(e) => {
                   e.currentTarget.src = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=400";

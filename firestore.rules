@@ -38,19 +38,19 @@ service cloud.firestore {
     }
 
     function isSuperAdmin() {
-      return isSignedIn() && userExists(request.auth.uid) && getUserData(request.auth.uid).role == 'SUPER_ADMIN' && isNotBannedOrSuspended(request.auth.uid);
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'SUPER_ADMIN' || getUserData(request.auth.uid).role == 'FOUNDER_OWNER') && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isAdmin() {
-      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN' || getUserData(request.auth.uid).role == 'FOUNDER_OWNER') && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isModerator() {
-      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'MODERATOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'MODERATOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN' || getUserData(request.auth.uid).role == 'FOUNDER_OWNER') && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isAuthor() {
-      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'AUTHOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'AUTHOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN' || getUserData(request.auth.uid).role == 'FOUNDER_OWNER') && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isReader() {
@@ -65,7 +65,7 @@ service cloud.firestore {
              data.displayName.size() >= 2 && data.displayName.size() <= 100 &&
              data.email is string &&
              data.email.size() > 0 && data.email.size() <= 200 &&
-             data.role in ['VISITOR', 'READER', 'AUTHOR', 'MODERATOR', 'ADMIN', 'SUPER_ADMIN'] &&
+             data.role in ['VISITOR', 'READER', 'AUTHOR', 'MODERATOR', 'ADMIN', 'SUPER_ADMIN', 'FOUNDER_OWNER'] &&
              data.bio is string && data.bio.size() <= 1000 &&
              data.createdAt is string &&
              data.updatedAt is string &&

@@ -388,25 +388,73 @@ export async function seedCloudFirestore() {
 // GLOBAL DATA ACCESS API (Saves to Cloud & caches Local)
 // ----------------------------------------------------
 
+// In-Memory cache dictionary for high-performance instant access
+const memoryCache: {
+  stories: Story[] | null;
+  profiles: UserProfile[] | null;
+  competitions: Competition[] | null;
+  auditLogs: AuditLog[] | null;
+  nodes: Record<string, StoryNode[]>;
+  submissions: Record<string, Submission[]>;
+  profileMap: Record<string, UserProfile>;
+} = {
+  stories: null,
+  profiles: null,
+  competitions: null,
+  auditLogs: null,
+  nodes: {},
+  submissions: {},
+  profileMap: {},
+};
+
 export const dbService = {
+  // Clear the in-memory cache to force-reload from firestore on next query
+  clearCache(): void {
+    memoryCache.stories = null;
+    memoryCache.profiles = null;
+    memoryCache.competitions = null;
+    memoryCache.auditLogs = null;
+    memoryCache.nodes = {};
+    memoryCache.submissions = {};
+    memoryCache.profileMap = {};
+    console.log("[Stilova Cache Manager] Cache cleared and invalidated.");
+  },
+
   // --- USERS MANAGEMENT ---
   async getProfile(uid: string): Promise<UserProfile | null> {
+    if (memoryCache.profileMap[uid]) {
+      return memoryCache.profileMap[uid];
+    }
     try {
       const docRef = doc(db, "users", uid);
       const snapshot = await getDoc(docRef);
       if (snapshot.exists()) {
-        return snapshot.data() as UserProfile;
+        const u = snapshot.data() as UserProfile;
+        memoryCache.profileMap[uid] = u;
+        return u;
       }
       return null;
     } catch (e) {
       // Offline fallback
       const usersList = getLocal<UserProfile[]>("users_profiles", []);
-      return usersList.find(u => u.uid === uid) || null;
+      const u = usersList.find(u => u.uid === uid) || null;
+      if (u) memoryCache.profileMap[uid] = u;
+      return u;
     }
   },
 
   async saveProfile(profile: UserProfile): Promise<void> {
     const path = `users/${profile.uid}`;
+    // Update memory
+    memoryCache.profileMap[profile.uid] = profile;
+    if (memoryCache.profiles) {
+      const idx = memoryCache.profiles.findIndex(u => u.uid === profile.uid);
+      if (idx > -1) {
+        memoryCache.profiles[idx] = profile;
+      } else {
+        memoryCache.profiles.push(profile);
+      }
+    }
     try {
       await setDoc(doc(db, "users", profile.uid), profile);
     } catch (e) {
@@ -421,33 +469,52 @@ export const dbService = {
     }
   },
 
-  async listProfiles(): Promise<UserProfile[]> {
+  async listProfiles(forceRefresh = false): Promise<UserProfile[]> {
+    if (!forceRefresh && memoryCache.profiles) {
+      return memoryCache.profiles;
+    }
     try {
       const snap = await getDocs(collection(db, "users"));
       const list = snap.docs.map(d => d.data() as UserProfile);
       setLocal("users_profiles", list);
+      memoryCache.profiles = list;
+      // Populate individual maps
+      list.forEach(p => {
+        memoryCache.profileMap[p.uid] = p;
+      });
       return list;
     } catch (e) {
-      return getLocal<UserProfile[]>("users_profiles", []);
+      const local = getLocal<UserProfile[]>("users_profiles", []);
+      memoryCache.profiles = local;
+      return local;
     }
   },
 
-  async listAuditLogs(): Promise<AuditLog[]> {
+  async listAuditLogs(forceRefresh = false): Promise<AuditLog[]> {
+    if (!forceRefresh && memoryCache.auditLogs) {
+      return memoryCache.auditLogs;
+    }
     try {
       const snap = await getDocs(collection(db, "audit_logs"));
       const list = snap.docs.map(d => d.data() as AuditLog);
       list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       setLocal("audit_logs", list);
+      memoryCache.auditLogs = list;
       return list;
     } catch (e) {
       const list = getLocal<AuditLog[]>("audit_logs", []);
       list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      memoryCache.auditLogs = list;
       return list;
     }
   },
 
   async saveAuditLog(log: AuditLog): Promise<void> {
     const path = `audit_logs/${log.id}`;
+    // Sync memory
+    if (memoryCache.auditLogs) {
+      memoryCache.auditLogs = [log, ...memoryCache.auditLogs];
+    }
     try {
       await setDoc(doc(db, "audit_logs", log.id), log);
     } catch (e) {
@@ -460,25 +527,36 @@ export const dbService = {
   },
 
   // --- STORIES ---
-  async listStories(genre?: string): Promise<Story[]> {
+  async listStories(genre?: string, forceRefresh = false): Promise<Story[]> {
+    if (!forceRefresh && memoryCache.stories) {
+      const list = memoryCache.stories;
+      return genre ? list.filter(s => s.genre === genre) : list;
+    }
     try {
       const colRef = collection(db, "stories");
       const snap = await getDocs(colRef);
       const list = snap.docs.map(d => d.data() as Story);
       setLocal("stories", list); // Cache it
+      memoryCache.stories = list;
       return genre ? list.filter(s => s.genre === genre) : list;
     } catch (e) {
       const local = getLocal<Story[]>("stories", []);
+      memoryCache.stories = local;
       return genre ? local.filter(s => s.genre === genre) : local;
     }
   },
 
   async getStory(storyId: string): Promise<Story | null> {
+    if (memoryCache.stories) {
+      const found = memoryCache.stories.find(s => s.id === storyId);
+      if (found) return found;
+    }
     try {
       const sRef = doc(db, "stories", storyId);
       const snap = await getDoc(sRef);
       if (snap.exists()) {
-        return snap.data() as Story;
+        const s = snap.data() as Story;
+        return s;
       }
       return null;
     } catch (e) {
@@ -488,6 +566,14 @@ export const dbService = {
 
   async saveStory(story: Story): Promise<void> {
     const path = `stories/${story.id}`;
+    // Update memory cache
+    if (memoryCache.stories) {
+      const idx = memoryCache.stories.findIndex(s => s.id === story.id);
+      if (idx > -1) memoryCache.stories[idx] = story;
+      else memoryCache.stories.push(story);
+    } else {
+      memoryCache.stories = [story];
+    }
     try {
       await setDoc(doc(db, "stories", story.id), story);
     } catch (e) {
@@ -503,6 +589,9 @@ export const dbService = {
 
   async deleteStory(storyId: string): Promise<void> {
     const path = `stories/${storyId}`;
+    if (memoryCache.stories) {
+      memoryCache.stories = memoryCache.stories.filter(s => s.id !== storyId);
+    }
     try {
       await deleteDoc(doc(db, "stories", storyId));
     } catch (e) {
@@ -514,24 +603,39 @@ export const dbService = {
   },
 
   // --- STORY NODES (Branches) ---
-  async listStoryNodes(storyId: string): Promise<StoryNode[]> {
+  async listStoryNodes(storyId: string, forceRefresh = false): Promise<StoryNode[]> {
+    if (!forceRefresh && memoryCache.nodes[storyId]) {
+      return memoryCache.nodes[storyId];
+    }
     try {
       const col = collection(db, `stories/${storyId}/nodes`);
       const snap = await getDocs(col);
       const nodes = snap.docs.map(d => d.data() as StoryNode);
       // Cache
+      memoryCache.nodes[storyId] = nodes;
+      
       const cachedRecord = getLocal<Record<string, StoryNode[]>>("nodes", {});
       cachedRecord[storyId] = nodes;
       setLocal("nodes", cachedRecord);
       return nodes;
     } catch (e) {
       const cachedRecord = getLocal<Record<string, StoryNode[]>>("nodes", {});
-      return cachedRecord[storyId] || [];
+      const fallbackNodes = cachedRecord[storyId] || [];
+      memoryCache.nodes[storyId] = fallbackNodes;
+      return fallbackNodes;
     }
   },
 
   async saveStoryNode(node: StoryNode): Promise<void> {
     const path = `stories/${node.storyId}/nodes/${node.id}`;
+    if (memoryCache.nodes[node.storyId]) {
+      const list = memoryCache.nodes[node.storyId];
+      const idx = list.findIndex(n => n.id === node.id);
+      if (idx > -1) list[idx] = node;
+      else list.push(node);
+    } else {
+      memoryCache.nodes[node.storyId] = [node];
+    }
     try {
       await setDoc(doc(db, `stories/${node.storyId}/nodes`, node.id), node);
     } catch (e) {
@@ -548,20 +652,33 @@ export const dbService = {
   },
 
   // --- COMPETITIONS ---
-  async listCompetitions(): Promise<Competition[]> {
+  async listCompetitions(forceRefresh = false): Promise<Competition[]> {
+    if (!forceRefresh && memoryCache.competitions) {
+      return memoryCache.competitions;
+    }
     try {
       const colRef = collection(db, "competitions");
       const snap = await getDocs(colRef);
       const list = snap.docs.map(d => d.data() as Competition);
+      memoryCache.competitions = list;
       setLocal("competitions", list);
       return list;
     } catch (e) {
-      return getLocal<Competition[]>("competitions", []);
+      const fallback = getLocal<Competition[]>("competitions", []);
+      memoryCache.competitions = fallback;
+      return fallback;
     }
   },
 
   async saveCompetition(comp: Competition): Promise<void> {
     const path = `competitions/${comp.id}`;
+    if (memoryCache.competitions) {
+      const idx = memoryCache.competitions.findIndex(c => c.id === comp.id);
+      if (idx > -1) memoryCache.competitions[idx] = comp;
+      else memoryCache.competitions.push(comp);
+    } else {
+      memoryCache.competitions = [comp];
+    }
     try {
       await setDoc(doc(db, "competitions", comp.id), comp);
     } catch (e) {
@@ -576,21 +693,32 @@ export const dbService = {
   },
 
   // --- SUBMISSIONS ---
-  async listSubmissions(compId: string): Promise<Submission[]> {
+  async listSubmissions(compId: string, forceRefresh = false): Promise<Submission[]> {
+    if (!forceRefresh && memoryCache.submissions[compId]) {
+      return memoryCache.submissions[compId];
+    }
     try {
       const colRef = collection(db, `competitions/${compId}/submissions`);
       const snap = await getDocs(colRef);
       const list = snap.docs.map(d => d.data() as Submission);
+      memoryCache.submissions[compId] = list;
       setLocal(`submissions_${compId}`, list);
       return list;
     } catch (e) {
       const all = getLocal<Submission[]>("submissions", []);
-      return all.filter(s => s.competitionId === compId);
+      const filtered = all.filter(s => s.competitionId === compId);
+      memoryCache.submissions[compId] = filtered;
+      return filtered;
     }
   },
 
   async submitToCompetition(compId: string, sub: Submission): Promise<void> {
     const path = `competitions/${compId}/submissions/${sub.id}`;
+    if (memoryCache.submissions[compId]) {
+      memoryCache.submissions[compId].push(sub);
+    } else {
+      memoryCache.submissions[compId] = [sub];
+    }
     try {
       await setDoc(doc(db, `competitions/${compId}/submissions`, sub.id), sub);
     } catch (e) {
@@ -622,7 +750,13 @@ export const dbService = {
       const subSnap = await getDoc(subRef);
       if (subSnap.exists()) {
         const subData = subSnap.data() as Submission;
-        await updateDoc(subRef, { votesCount: (subData.votesCount || 0) + 1 });
+        const updatedCount = (subData.votesCount || 0) + 1;
+        await updateDoc(subRef, { votesCount: updatedCount });
+        // Update memory
+        if (memoryCache.submissions[compId]) {
+          const mIdx = memoryCache.submissions[compId].findIndex(s => s.id === submissionId);
+          if (mIdx > -1) memoryCache.submissions[compId][mIdx].votesCount = updatedCount;
+        }
       }
       return true;
     } catch (e) {
