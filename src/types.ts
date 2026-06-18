@@ -1,6 +1,22 @@
-export type UserRole = "reader" | "writer" | "moderator" | "admin";
+export type UserRole = "VISITOR" | "READER" | "AUTHOR" | "MODERATOR" | "ADMIN" | "SUPER_ADMIN" | "FOUNDER_OWNER";
 
 export type AfricanGenre = "afrofuturism" | "mythology" | "romance" | "drama" | "historical";
+
+export interface StorageUploadOptions {
+  bucket: "avatars" | "covers" | "illustrations" | "chapters" | "contests" | "temporary";
+  filePath: string;
+  contentType?: string;
+  userId?: string;
+  userRole?: string;
+}
+
+export interface IStorageProvider {
+  uploadFile(file: File, options: StorageUploadOptions): Promise<string>;
+  deleteFile(bucket: string, filePath: string): Promise<void>;
+  getPublicUrl(bucket: string, filePath: string): Promise<string>;
+  createSignedUrl(bucket: string, filePath: string, expiresInSeconds: number): Promise<string>;
+  moveTemporaryFile(sourcePath: string, destBucket: string, destPath: string): Promise<string>;
+}
 
 export interface UserProfile {
   uid: string;
@@ -13,6 +29,19 @@ export interface UserProfile {
   createdAt: string;
   updatedAt: string;
   isVisitor?: boolean;
+  suspended?: boolean;
+  banned?: boolean;
+}
+
+export interface AuditLog {
+  id: string;
+  action: string;
+  performedBy: string;
+  performedByName: string;
+  targetUserId: string;
+  targetUserName: string;
+  details: string;
+  timestamp: string;
 }
 
 export interface Story {

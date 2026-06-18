@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "950696898237",
+    "project_id": "aerial-xylocarp-btgzl",
+    "storage_bucket": "aerial-xylocarp-btgzl.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:950696898237:android:c1d2ccfa430de208f2",
+        "android_client_info": {
+          "package_name": "com.stilova.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTeo7G4g1wFjaDp5DTnxO61Ptr2TJly4M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

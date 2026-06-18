@@ -157,11 +157,33 @@ export default function App() {
             profile = await dbService.getProfile(user.uid);
             if (profile && user.email) {
               const emailLower = user.email.toLowerCase();
-              if (emailLower === "yombivictor@gmail.com" || emailLower === "gabrielyombi311@gmail.com" || emailLower.includes("yombi")) {
-                if (profile.role !== "admin") {
-                  profile.role = "admin";
+              const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
+              if (emailLower === OWNER_EMAIL) {
+                if (profile.role !== "FOUNDER_OWNER") {
+                  profile.role = "FOUNDER_OWNER";
+                  await dbService.saveProfile(profile);
+                  // Audit log for security verification
+                  await dbService.saveAuditLog({
+                    id: "audit_" + Date.now(),
+                    action: "FOUNDER_AUTO_ASSIGN",
+                    performedBy: user.uid,
+                    performedByName: profile.displayName || user.email,
+                    targetUserId: user.uid,
+                    targetUserName: profile.displayName || user.email,
+                    details: "FOUNDER_OWNER role auto-claimed on login by email match.",
+                    timestamp: new Date().toISOString()
+                  });
+                }
+              } else if (emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi")) {
+                if (profile.role !== "SUPER_ADMIN" && profile.role !== "FOUNDER_OWNER") {
+                  profile.role = "SUPER_ADMIN";
                   await dbService.saveProfile(profile);
                 }
+              } else if (profile.role === "admin" || (profile.role as string) === "writer" || (profile.role as string) === "reader" || (profile.role as string) === "moderator") {
+                // Auto-upgrade legacy roles to modern uppercase format
+                const upRole = (profile.role as string).toUpperCase();
+                profile.role = upRole === "WRITER" ? "AUTHOR" : upRole as UserRole;
+                await dbService.saveProfile(profile);
               }
             }
           } catch (profileError) {
@@ -169,30 +191,70 @@ export default function App() {
           }
 
           if (!profile) {
+            // Determine if first user registered in system to assign SUPER_ADMIN
+            let isFirstUser = false;
+            try {
+              const profilesList = await dbService.listProfiles();
+              if (profilesList.length === 0) {
+                isFirstUser = true;
+              }
+            } catch (pCheckError) {
+              console.warn("[Stilova Startup] First user check offline/deferred:", pCheckError);
+            }
+
             // If profile is absent, build default profile
             const emailLower = (user.email || "").toLowerCase();
-            const isAdmin = emailLower === "yombivictor@gmail.com" || emailLower === "gabrielyombi311@gmail.com" || emailLower.includes("yombi");
+            const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
+            const isFounder = emailLower === OWNER_EMAIL;
+            const isAdminOrSuper = emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi") || isFirstUser;
+            
+            let roleToAssign: UserRole = "READER";
+            if (isFounder) {
+              roleToAssign = "FOUNDER_OWNER";
+            } else if (isAdminOrSuper) {
+              roleToAssign = "SUPER_ADMIN";
+            } else if (signupRole === "writer") {
+              roleToAssign = "AUTHOR";
+            } else if (signupRole === "reader") {
+              roleToAssign = "READER";
+            } else if (signupRole === "moderator") {
+              roleToAssign = "MODERATOR";
+            } else if (signupRole === "admin") {
+              roleToAssign = "ADMIN";
+            } else {
+              roleToAssign = "READER";
+            }
+
             profile = {
               uid: user.uid,
               displayName: user.displayName || displayName || "Auteur Nouveau",
               email: user.email || "",
-              role: isAdmin ? "admin" : signupRole,
+              role: roleToAssign,
               bio: "Auteur en herbe explorant la bibliothèque sacrée.",
               favoriteGenres: ["afrofuturism"],
               avatarUrl: selectedAvatar,
               createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-  };
+              updatedAt: new Date().toISOString(),
+              suspended: false,
+              banned: false
+            };
             try {
               await dbService.saveProfile(profile);
             } catch (saveError) {
               console.warn("[Stilova Startup] Cloud profile preservation skipped:", saveError);
             }
           }
-          setCurrentUser(profile);
-          setIsProtectedModalOpen(false);
-          // Redirect to catalog on login / signup
-          setRoute("discover");
+
+          if (profile.suspended || profile.banned) {
+            setCurrentUser(profile);
+            setRoute("suspended");
+            setIsProtectedModalOpen(false);
+          } else {
+            setCurrentUser(profile);
+            setIsProtectedModalOpen(false);
+            // Redirect to catalog on login / signup
+            setRoute("discover");
+          }
         } else {
           setCurrentUser(null);
         }
@@ -242,16 +304,20 @@ export default function App() {
   };
 
   const handleDemoBypass = () => {
+    const OWNER_EMAIL = (((import.meta as any).env || {}).OWNER_EMAIL || "gabrielyombi311@gmail.com").toLowerCase();
+    const isFounder = (email || "yombivictor@gmail.com").toLowerCase() === OWNER_EMAIL;
     const demoProfile: UserProfile = {
       uid: "offline_demo_user",
       displayName: displayName || "Archy",
       email: email || "yombivictor@gmail.com",
-      role: "admin",
+      role: isFounder ? "FOUNDER_OWNER" : "ADMIN",
       bio: "Mode d'urgence local activé suite à une erreur Firebase Auth.",
       favoriteGenres: ["afrofuturism"],
       avatarUrl: selectedAvatar,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      suspended: false,
+      banned: false
     };
     
     // Save to local cached list
@@ -648,7 +714,7 @@ export default function App() {
             </button>
 
             {/* Atelier accessible strictly to logged in writers/admins */}
-            {currentUser && (currentUser.role === "writer" || currentUser.role === "admin") && (
+            {currentUser && (currentUser.role === "AUTHOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
               <button
                 onClick={() => { setRoute("atelier"); setActiveStoryId(null); setSelectedWorkId(null); }}
                 className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
@@ -663,7 +729,7 @@ export default function App() {
             )}
 
             {/* Moderators accessible to moderators and admins */}
-            {currentUser && (currentUser.role === "moderator" || currentUser.role === "admin") && (
+            {currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
               <button
                 onClick={() => { setRoute("mods"); setActiveStoryId(null); setSelectedWorkId(null); }}
                 className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
@@ -726,6 +792,31 @@ export default function App() {
       {/* 2. CORE SCREEN RECONCILIATOR */}
       <main className="max-w-7xl mx-auto w-full mt-6 flex-1 px-4 sm:px-6">
         
+        {/* ==================================================== */}
+        {/* 2.0 BANNED / SUSPENDED ESCAPE PORTAL                  */}
+        {/* ==================================================== */}
+        {route === "suspended" && currentUser && (
+          <div className="flex flex-col items-center justify-center text-center p-8 sm:p-12 min-h-[500px] bg-slate-950/40 border border-red-500/30 rounded-3xl max-w-xl mx-auto gap-6 animate-fade-in my-12 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+              <ShieldAlert className="w-10 h-10 text-red-500 animate-pulse" />
+            </div>
+            <h2 className="font-sans font-extrabold text-2xl text-slate-100">Accès Suspendu ou Banni</h2>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Le Conseil d’Administration de Stilova a marqué votre compte <strong className="text-slate-200">{currentUser.email}</strong> comme {currentUser.banned ? "définitivement banni" : "suspendu temporairement"} pour entorse au code d'écriture ou signalements abusifs multiples.
+            </p>
+            <div className="text-xs text-slate-500 bg-slate-900 border border-slate-850 p-4 rounded-xl w-full text-left leading-normal font-sans space-y-1">
+              <p className="font-bold text-slate-400">Pourquoi cette décision ?</p>
+              <p>Stilova préserve l'authenticité et la bienveillance de la parole. Tout manquement éditorial ou comportement haineux mène au gel de l'accès.</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-amber-550 hover:bg-amber-400 text-slate-950 font-bold px-6 py-2.5 rounded-xl text-xs shadow-md transition cursor-pointer"
+            >
+              Se déconnecter de Stilova
+            </button>
+          </div>
+        )}
+
         {/* ==================================================== */}
         {/* 2.1 IMMERSIVE PUBLIC LANDING SCREEN (default view) */}
         {/* ==================================================== */}
@@ -964,9 +1055,9 @@ export default function App() {
           <LibraryView
             stories={stories}
             onSelectStory={handleOpenStoryReader}
-            currentUserRole={currentUser ? currentUser.role : "visitor"}
+            currentUserRole={currentUser ? currentUser.role : "VISITOR"}
             onOpenCreateModal={
-              currentUser && (currentUser.role === "writer" || currentUser.role === "admin")
+              currentUser && (currentUser.role === "AUTHOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN")
                 ? () => setIsCreateModalOpen(true)
                 : undefined
             }
@@ -1989,10 +2080,11 @@ export default function App() {
         {/* ==================================================== */}
         {/* 2.9 MODERATION SCREEN PANEL                         */}
         {/* ==================================================== */}
-        {route === "mods" && currentUser && (currentUser.role === "admin" || currentUser.role === "moderator") && (
+        {route === "mods" && currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN") && (
           <AdminPanel
             stories={stories}
             onRefreshStories={refreshStoryCatalog}
+            currentUser={currentUser}
           />
         )}
 

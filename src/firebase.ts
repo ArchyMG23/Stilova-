@@ -25,13 +25,24 @@ import {
   addDoc
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
-import { Story, StoryNode, Competition, Submission, UserProfile, UserRole } from "./types";
+import { Story, StoryNode, Competition, Submission, UserProfile, UserRole, AuditLog } from "./types";
+
+// Resolve dynamic config overrides or use default bundle configuration
+const metaEnv = (import.meta as any).env || {};
+const activeFirebaseConfig = {
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+  appId: metaEnv.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+  firestoreDatabaseId: metaEnv.VITE_FIREBASE_FIRESTORE_DB_ID || firebaseConfig.firestoreDatabaseId || undefined,
+};
 
 // Initialize Firebase SDK
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(activeFirebaseConfig);
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId || undefined);
+}, activeFirebaseConfig.firestoreDatabaseId || undefined);
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
@@ -407,6 +418,44 @@ export const dbService = {
       if (idx > -1) usersList[idx] = profile;
       else usersList.push(profile);
       setLocal("users_profiles", usersList);
+    }
+  },
+
+  async listProfiles(): Promise<UserProfile[]> {
+    try {
+      const snap = await getDocs(collection(db, "users"));
+      const list = snap.docs.map(d => d.data() as UserProfile);
+      setLocal("users_profiles", list);
+      return list;
+    } catch (e) {
+      return getLocal<UserProfile[]>("users_profiles", []);
+    }
+  },
+
+  async listAuditLogs(): Promise<AuditLog[]> {
+    try {
+      const snap = await getDocs(collection(db, "audit_logs"));
+      const list = snap.docs.map(d => d.data() as AuditLog);
+      list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      setLocal("audit_logs", list);
+      return list;
+    } catch (e) {
+      const list = getLocal<AuditLog[]>("audit_logs", []);
+      list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      return list;
+    }
+  },
+
+  async saveAuditLog(log: AuditLog): Promise<void> {
+    const path = `audit_logs/${log.id}`;
+    try {
+      await setDoc(doc(db, "audit_logs", log.id), log);
+    } catch (e) {
+      console.warn("Could not save audit log to Firestore:", e);
+    } finally {
+      const list = getLocal<AuditLog[]>("audit_logs", []);
+      list.push(log);
+      setLocal("audit_logs", list);
     }
   },
 

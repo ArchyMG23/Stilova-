@@ -8,7 +8,6 @@ service cloud.firestore {
     }
 
     function isEmailVerified() {
-      // Mandated standard verification check
       return request.auth != null && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
     }
 
@@ -16,6 +15,7 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Context-friendly data helpers
     function incoming() {
       return request.resource.data;
     }
@@ -24,21 +24,37 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Role-based helpers using Firestore queries
     function getUserData(uid) {
       return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
-    function hasRole(uid, role) {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)) && getUserData(uid).role == role;
+    function userExists(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    // Role-based gates check, enforcing non-suspension status
+    function isNotBannedOrSuspended(uid) {
+      return !getUserData(uid).get('suspended', false) && !getUserData(uid).get('banned', false);
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && userExists(request.auth.uid) && getUserData(request.auth.uid).role == 'SUPER_ADMIN' && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData(request.auth.uid).role == 'admin';
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
     }
 
     function isModerator() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserData(request.auth.uid).role == 'moderator' || getUserData(request.auth.uid).role == 'admin');
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'MODERATOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
+    }
+
+    function isAuthor() {
+      return isSignedIn() && userExists(request.auth.uid) && (getUserData(request.auth.uid).role == 'AUTHOR' || getUserData(request.auth.uid).role == 'ADMIN' || getUserData(request.auth.uid).role == 'SUPER_ADMIN') && isNotBannedOrSuspended(request.auth.uid);
+    }
+
+    function isReader() {
+      return isSignedIn() && userExists(request.auth.uid) && isNotBannedOrSuspended(request.auth.uid);
     }
 
     // Entity validation functions
@@ -49,10 +65,12 @@ service cloud.firestore {
              data.displayName.size() >= 2 && data.displayName.size() <= 100 &&
              data.email is string &&
              data.email.size() > 0 && data.email.size() <= 200 &&
-             data.role in ['reader', 'writer', 'moderator', 'admin'] &&
+             data.role in ['VISITOR', 'READER', 'AUTHOR', 'MODERATOR', 'ADMIN', 'SUPER_ADMIN'] &&
              data.bio is string && data.bio.size() <= 1000 &&
              data.createdAt is string &&
-             data.updatedAt is string;
+             data.updatedAt is string &&
+             (!data.keys().hasAny(['suspended']) || data.suspended is bool) &&
+             (!data.keys().hasAny(['banned']) || data.banned is bool);
     }
 
     function isValidStory(data) {
@@ -70,14 +88,7 @@ service cloud.firestore {
              data.reported is bool &&
              data.isFeatured is bool &&
              data.createdAt is string &&
-             data.updatedAt is string &&
-             (!data.keys().hasAny(['title_font']) || (data.title_font is string && data.title_font.size() <= 100)) &&
-             (!data.keys().hasAny(['title_font_weight']) || (data.title_font_weight is string && data.title_font_weight.size() <= 50)) &&
-             (!data.keys().hasAny(['signature_font']) || (data.signature_font is string && data.signature_font.size() <= 100)) &&
-             (!data.keys().hasAny(['signature_color']) || (data.signature_color is string && data.signature_color.size() <= 50)) &&
-             (!data.keys().hasAny(['signature_alignment']) || (data.signature_alignment is string && data.signature_alignment.size() <= 20)) &&
-             (!data.keys().hasAny(['auto_signature_enabled']) || data.auto_signature_enabled is bool) &&
-             (!data.keys().hasAny(['default_signature']) || (data.default_signature is string && data.default_signature.size() <= 500));
+             data.updatedAt is string;
     }
 
     function isValidStoryNode(data) {
@@ -88,11 +99,7 @@ service cloud.firestore {
              data.isRoot is bool &&
              data.choices is list &&
              data.createdAt is string &&
-             data.updatedAt is string &&
-             (!data.keys().hasAny(['custom_signature']) || (data.custom_signature is string && data.custom_signature.size() <= 500)) &&
-             (!data.keys().hasAny(['custom_signature_font']) || (data.custom_signature_font is string && data.custom_signature_font.size() <= 100)) &&
-             (!data.keys().hasAny(['custom_signature_color']) || (data.custom_signature_color is string && data.custom_signature_color.size() <= 50)) &&
-             (!data.keys().hasAny(['custom_signature_alignment']) || (data.custom_signature_alignment is string && data.custom_signature_alignment.size() <= 20));
+             data.updatedAt is string;
     }
 
     function isValidCompetition(data) {
@@ -127,6 +134,17 @@ service cloud.firestore {
              data.createdAt is string;
     }
 
+    function isValidAuditLog(data) {
+      return data.id is string && isValidId(data.id) &&
+             data.action is string && data.action.size() <= 100 &&
+             data.performedBy is string && isValidId(data.performedBy) &&
+             data.performedByName is string &&
+             data.targetUserId is string && isValidId(data.targetUserId) &&
+             data.targetUserName is string &&
+             data.details is string && data.details.size() <= 1000 &&
+             data.timestamp is string;
+    }
+
     // 1. Global safety net catch-all
     match /{document=**} {
       allow read, write: if false;
@@ -134,43 +152,55 @@ service cloud.firestore {
 
     // 2. Users Collection
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && (incoming().role == 'reader' || incoming().role == 'writer');
-      allow update: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && (
-        // Forbid promoting self role
-        incoming().role == existing().role &&
-        incoming().uid == existing().uid &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'bio', 'avatarUrl', 'favoriteGenres', 'updatedAt'])
-      ) || isAdmin();
-      allow delete: if isAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isNotBannedOrSuspended(request.auth.uid));
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        // Super Admin can edit anyone
+        isSuperAdmin() || 
+        // Admin can edit anyone except other Admins or Super Admins
+        (isAdmin() && getUserData(userId).role != 'SUPER_ADMIN') ||
+        // User themselves can edit, but CANNOT self-promote roles or alter status flags
+        (request.auth.uid == userId && isNotBannedOrSuspended(request.auth.uid) && isValidUser(incoming()) && (
+          incoming().role == existing().role &&
+          incoming().uid == existing().uid &&
+          incoming().get('suspended', false) == existing().get('suspended', false) &&
+          incoming().get('banned', false) == existing().get('banned', false) && 
+          request.resource.data.diff(resource.data).affectedKeys().hasAny(['displayName', 'bio', 'avatarUrl', 'favoriteGenres', 'updatedAt'])
+        ))
+      );
+      allow delete: if isSuperAdmin();
     }
 
-    // 3. Stories Collection
+    // 3. Audit Logs Collection
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin() || isAdmin();
+      allow create: if isSignedIn() && isValidAuditLog(incoming()) && isNotBannedOrSuspended(request.auth.uid);
+      allow update, delete: if false; // Audit logs are strictly immutable for trust
+    }
+
+    // 4. Stories Collection
     match /stories/{storyId} {
       allow read, list: if (resource == null || resource.data.isPublished == true) || (
-        isSignedIn() && (
+        isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (
           resource.data.authorId == request.auth.uid ||
           isModerator()
         )
       );
       
-      allow create: if isEmailVerified() && 
+      allow create: if isEmailVerified() && isNotBannedOrSuspended(request.auth.uid) &&
                     (incoming().authorId == request.auth.uid || incoming().authorId == "admin_seed_griot") && 
                     isValidId(storyId) && isValidStory(incoming());
       
-      allow update: if isSignedIn() && isValidStory(incoming()) && (
-        // Admin or Moderator can override
+      allow update: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && isValidStory(incoming()) && (
         isModerator() ||
         (
           incoming().authorId == existing().authorId &&
-          incoming().isFeatured == existing().isFeatured && // Only admin can feature
+          incoming().isFeatured == existing().isFeatured && 
           (
-            // Action 1: Owner editing contents of their own story
             (
               request.auth.uid == existing().authorId &&
-              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'description', 'coverUrl', 'genre', 'isPublished', 'isInteractive', 'updatedAt', 'title_font', 'title_font_weight', 'signature_font', 'signature_color', 'signature_alignment', 'auto_signature_enabled', 'default_signature'])
+              request.resource.data.diff(resource.data).affectedKeys().hasAny(['title', 'description', 'coverUrl', 'genre', 'isPublished', 'isInteractive', 'updatedAt', 'title_font', 'title_font_weight', 'signature_font', 'signature_color', 'signature_alignment', 'auto_signature_enabled', 'default_signature'])
             ) ||
-            // Action 2: Any signed-in user can increment view count, report, or rate a story
             (
               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewsCount', 'reported', 'rating', 'updatedAt'])
             )
@@ -178,27 +208,27 @@ service cloud.firestore {
         )
       );
 
-      allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isModerator());
+      allow delete: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (request.auth.uid == existing().authorId || isModerator());
 
-      // 4. Story Nodes Sub-Collection (Chapters / Interactive Choices)
+      // 4a. Story Nodes Sub-Collection
       match /nodes/{nodeId} {
         allow read, list: if get(/databases/$(database)/documents/stories/$(storyId)).data.isPublished == true || (
-          isSignedIn() && (
+          isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (
             get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid ||
             isModerator()
           )
         );
-        allow create: if isSignedIn() && 
+        allow create: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && 
                       (get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid ||
                        get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == "admin_seed_griot") &&
                       isValidId(nodeId) &&
                       isValidStoryNode(incoming());
-        allow update: if isSignedIn() && 
+        allow update: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && 
                       get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid &&
                       isValidStoryNode(incoming()) &&
                       incoming().storyId == existing().storyId &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'content', 'choices', 'updatedAt', 'custom_signature', 'custom_signature_font', 'custom_signature_color', 'custom_signature_alignment']);
-        allow delete: if isSignedIn() && 
+                      request.resource.data.diff(resource.data).affectedKeys().hasAny(['title', 'content', 'choices', 'updatedAt', 'custom_signature', 'custom_signature_font', 'custom_signature_color', 'custom_signature_alignment']);
+        allow delete: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && 
                       get(/databases/$(database)/documents/stories/$(storyId)).data.authorId == request.auth.uid;
       }
     }
@@ -206,10 +236,9 @@ service cloud.firestore {
     // 5. Competitions Collection
     match /competitions/{competitionId} {
       allow read, list: if true;
-      allow create: if (isAdmin() || (isSignedIn() && competitionId in ['comp_afrofuturism_2026', 'comp_myth_legacy'])) && isValidId(competitionId) && isValidCompetition(incoming());
-      allow update: if isSignedIn() && isValidCompetition(incoming()) && (
+      allow create: if (isAdmin() || (isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && competitionId in ['comp_afrofuturism_2026', 'comp_myth_legacy'])) && isValidId(competitionId) && isValidCompetition(incoming());
+      allow update: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && isValidCompetition(incoming()) && (
         isAdmin() ||
-        // System updates submissions count automatically
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submissionsCount'])
       );
       allow delete: if isAdmin();
@@ -217,41 +246,40 @@ service cloud.firestore {
       // 6. Submissions Sub-Collection
       match /submissions/{submissionId} {
         allow read, list: if (resource != null && resource.data.status == 'approved') || (
-          isSignedIn() && (
+          isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (
             resource.data.authorId == request.auth.uid ||
             isModerator()
           )
         );
-        allow create: if isEmailVerified() && 
+        allow create: if isEmailVerified() && isNotBannedOrSuspended(request.auth.uid) && 
                       (incoming().authorId == request.auth.uid || incoming().authorId == "admin_seed_griot") && 
                       get(/databases/$(database)/documents/competitions/$(competitionId)).data.isOpen == true &&
                       exists(/databases/$(database)/documents/stories/$(incoming().storyId)) &&
                       isValidId(submissionId) && 
                       isValidSubmission(incoming());
-        allow update: if isSignedIn() && isValidSubmission(incoming()) && (
+        allow update: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && isValidSubmission(incoming()) && (
           isModerator() ||
           (
             request.auth.uid == existing().authorId &&
             incoming().authorId == existing().authorId &&
-            incoming().status == existing().status && // Writer cannot self-approve
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['storyTitle', 'storyId'])
+            incoming().status == existing().status && 
+            request.resource.data.diff(resource.data).affectedKeys().hasAny(['storyTitle', 'storyId'])
           ) ||
           (
-            // Action: Casting a vote (increments votesCount)
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votesCount'])
           )
         );
-        allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isModerator());
+        allow delete: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (request.auth.uid == existing().authorId || isModerator());
 
         // 7. Votes Sub-Collection
         match /votes/{voteId} {
-          allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isModerator());
-          allow create: if isEmailVerified() && 
+          allow read: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (request.auth.uid == resource.data.userId || isModerator());
+          allow create: if isEmailVerified() && isNotBannedOrSuspended(request.auth.uid) && 
                         incoming().userId == request.auth.uid && 
                         !exists(/databases/$(database)/documents/competitions/$(competitionId)/submissions/$(submissionId)/votes/$(voteId)) &&
                         isValidId(voteId) && 
                         isValidVote(incoming());
-          allow delete: if isSignedIn() && (request.auth.uid == existing().userId || isAdmin());
+          allow delete: if isSignedIn() && isNotBannedOrSuspended(request.auth.uid) && (request.auth.uid == existing().userId || isAdmin());
         }
       }
     }
