@@ -54,7 +54,28 @@ export default function ReaderView({ storyId, onBack, userId, isVisitor, onRegis
   // Load story and associated nodes
   useEffect(() => {
     async function loadReaderData() {
-      setLoading(true);
+      let cachedStory: Story | null = null;
+      let cachedNodes: StoryNode[] = [];
+
+      try {
+        // Fast local retrieve (0ms delay) to avoid visual spinners if we opened this before
+        const storiesCached = JSON.parse(localStorage.getItem("stories") || "[]") as Story[];
+        cachedStory = storiesCached.find(s => s.id === storyId) || null;
+
+        const allNodesCached = JSON.parse(localStorage.getItem("nodes") || "{}") as Record<string, StoryNode[]>;
+        cachedNodes = allNodesCached[storyId] || [];
+
+        if (cachedStory && cachedNodes.length > 0) {
+          setStory(cachedStory);
+          setNodes(cachedNodes);
+          const root = cachedNodes.find(n => n.isRoot) || cachedNodes[0] || null;
+          setCurrentNode(root);
+          setLoading(false); // Render immediately
+        }
+      } catch (cacheErr) {
+        console.warn("Cached reader restore skipped:", cacheErr);
+      }
+
       try {
         const activeStory = await dbService.getStory(storyId);
         if (activeStory) {
@@ -62,18 +83,16 @@ export default function ReaderView({ storyId, onBack, userId, isVisitor, onRegis
           const allNodes = await dbService.listStoryNodes(storyId);
           setNodes(allNodes);
 
-          // Locate starting root node
           const root = allNodes.find(n => n.isRoot) || allNodes[0] || null;
-          setCurrentNode(root);
+          
+          if (!currentNode && root) {
+            setCurrentNode(root);
+            triggerAtmosAnalysis(root.content);
+          }
 
           // Check if saved offline
           const savedList = JSON.parse(localStorage.getItem("stilova_offline_story_ids") || "[]");
           setIsSavedOffline(savedList.includes(storyId));
-
-          if (root) {
-            // Auto trigger atmosphere analyses
-            triggerAtmosAnalysis(root.content);
-          }
         }
       } catch (err) {
         console.error("Reader load failed", err);

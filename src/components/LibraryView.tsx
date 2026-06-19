@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Story, AfricanGenre } from "../types";
 import { BookOpen, Search, Filter, Sparkles, Flame, Eye, Star, Plus } from "lucide-react";
+import { dbService } from "../firebase";
 
 interface LibraryViewProps {
   stories: Story[];
@@ -21,6 +22,14 @@ const GENRES: { key: AfricanGenre | "all"; label: string; icon: string }[] = [
 export default function LibraryView({ stories, onSelectStory, currentUserRole, onOpenCreateModal }: LibraryViewProps) {
   const [selectedGenre, setSelectedGenre] = useState<AfricanGenre | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  const handlePrefetchStory = (storyId: string) => {
+    try {
+      // Background warm-up of caches for instant 0ms clicks
+      dbService.getStory(storyId);
+      dbService.listStoryNodes(storyId);
+    } catch (_) {}
+  };
 
   const filteredStories = stories.filter(story => {
     const matchGenre = selectedGenre === "all" || story.genre === selectedGenre;
@@ -77,6 +86,8 @@ export default function LibraryView({ stories, onSelectStory, currentUserRole, o
               <div
                 key={story.id}
                 onClick={() => onSelectStory(story.id)}
+                onMouseEnter={() => handlePrefetchStory(story.id)}
+                onTouchStart={() => handlePrefetchStory(story.id)}
                 className="group relative bg-slate-900 border border-slate-750 hover:border-amber-500/50 rounded-none p-4 flex gap-4 cursor-pointer transition duration-300 transform hover:-translate-y-1 hover:shadow-2xl hover:shadow-amber-500/5 overflow-hidden animate-fade-in"
               >
                 {/* Backdrop lighting */}
@@ -179,6 +190,8 @@ export default function LibraryView({ stories, onSelectStory, currentUserRole, o
               <div
                 key={story.id}
                 onClick={() => onSelectStory(story.id)}
+                onMouseEnter={() => handlePrefetchStory(story.id)}
+                onTouchStart={() => handlePrefetchStory(story.id)}
                 className="group flex flex-col bg-slate-900 border border-slate-750 hover:border-amber-500/50 rounded-none overflow-hidden cursor-pointer transition duration-300 transform hover:-translate-y-1.5 hover:shadow-xl shadow-md"
               >
                 {/* Book Cover Image aspect height */}

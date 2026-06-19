@@ -171,6 +171,10 @@ export default function App() {
   // Protected action login modal guard
   const [isProtectedModalOpen, setIsProtectedModalOpen] = useState(false);
 
+  // Application factory reset system state
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
   // Writer Workspace (Atelier) States
   const [myStories, setMyStories] = useState<Story[]>([]);
   const [writingStory, setWritingStory] = useState<Story | null>(null);
@@ -455,6 +459,39 @@ export default function App() {
     setWritingStory(null);
     setEditingNode(null);
     setRoute("landing");
+  };
+
+  const handleResetApplication = async () => {
+    setIsResetting(true);
+    try {
+      // 1. Clear all in-memory caches to lock out stale read pipelines
+      dbService.clearCache();
+      
+      // 2. Wipe all local storage instantly so local cache database boots on empty slate
+      localStorage.clear();
+      
+      // 3. Force-repopulate local story and node catalogs so they open offline in 0ms on the reboot
+      bootstrapLocalData();
+      
+      // 4. Try signing out and cloud-seeding in parallel background streams (will not block the main reload thread)
+      try {
+        Promise.resolve(signOut(auth)).catch(() => {});
+      } catch (_) {}
+      
+      try {
+        Promise.resolve(seedCloudFirestore()).catch(() => {});
+      } catch (_) {}
+      
+      // 5. Briefly pause 200ms to allow local storage writes and promises to register, then trigger reload
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // 6. Hard reload the page. This restarts the whole react app instantly on a clean factory slate
+      window.location.reload();
+    } catch (err) {
+      console.error("Format & reset failed:", err);
+      // Fallback reload anyway
+      window.location.reload();
+    }
   };
 
   const handleOpenStoryReaderFromDetail = () => {
@@ -943,6 +980,19 @@ export default function App() {
 
           {/* Right Header Panel (User Profile or Sign buttons) */}
           <div className="flex items-center gap-3 shrink-0 pl-2 border-l border-slate-800">
+            {/* Reset App Formatter Button - Private and reserved for FOUNDER_OWNER */}
+            {currentUser && currentUser.role === "FOUNDER_OWNER" && (
+              <button
+                onClick={() => setIsResetModalOpen(true)}
+                className="p-2 rounded-xl bg-slate-950 hover:bg-rose-950/45 hover:text-rose-400 border border-slate-800 hover:border-rose-900/50 transition-all duration-250 cursor-pointer text-slate-400 flex items-center gap-1.5 shrink-0 animate-pulse"
+                title="Formater / Réinitialiser l'application"
+                id="reset-app-founder-btn"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin-slow" />
+                <span className="hidden sm:inline font-mono text-[9px] uppercase tracking-wider text-slate-400 hover:text-rose-400 font-bold">Formatter</span>
+              </button>
+            )}
+
             {currentUser ? (
               <div className="flex items-center gap-3">
                 <div 
@@ -1020,7 +1070,7 @@ export default function App() {
         {/* ==================================================== */}
         {/* 2.1 IMMERSIVE PUBLIC LANDING SCREEN (default view) */}
         {/* ==================================================== */}
-        {route === "landing" && (
+        <div style={{ display: route === "landing" ? "block" : "none" }}>
           <div className="flex flex-col gap-12 w-full animate-fade-in">
             
             {/* 1. VISITOR HERO BANNER (Global banner style for everyone) */}
@@ -1254,12 +1304,12 @@ export default function App() {
             </div>
 
           </div>
-        )}
+        </div>
 
         {/* ==================================================== */}
         {/* 2.2 PUBLIC CATALOG / DISCOVER VIEW                  */}
         {/* ==================================================== */}
-        {route === "discover" && (
+        <div style={{ display: route === "discover" ? "block" : "none" }}>
           <LibraryView
             stories={stories}
             onSelectStory={handleOpenStoryReader}
@@ -1270,7 +1320,7 @@ export default function App() {
                 : undefined
             }
           />
-        )}
+        </div>
 
         {/* ==================================================== */}
         {/* 2.3 STORY DETAIL - FICHE DE L'OEUVRE PRIVILEGE VIEW  */}
@@ -1305,7 +1355,7 @@ export default function App() {
         {/* ==================================================== */}
         {/* 2.5 PUBLIC CONTESTS VIEW                            */}
         {/* ==================================================== */}
-        {route === "contests" && (
+        <div style={{ display: route === "contests" ? "block" : "none" }}>
           <ContestsView
             currentUserUid={currentUser ? currentUser.uid : undefined}
             currentUserRole={currentUser ? currentUser.role : undefined}
@@ -1313,12 +1363,12 @@ export default function App() {
             onSelectStory={handleOpenStoryReader}
             isVisitor={!currentUser}
           />
-        )}
+        </div>
 
         {/* ==================================================== */}
         {/* 2.6 PUBLIC AUTHORS PROFILES GRID                     */}
         {/* ==================================================== */}
-        {route === "profiles" && (
+        <div style={{ display: route === "profiles" ? "block" : "none" }} className="w-full">
           <div className="flex flex-col gap-8 w-full animate-fade-in mb-10">
             <div className="bg-gradient-to-r from-amber-550/15 via-indigo-950/20 to-transparent p-6 rounded-3xl border border-slate-800">
               <h2 className="font-sans font-bold text-slate-100 text-lg md:text-2xl">Les Plumes du Cercle Stilova</h2>
@@ -1380,7 +1430,7 @@ export default function App() {
               ))}
             </div>
           </div>
-        )}
+        </div>
 
         {/* ==================================================== */}
         {/* 2.7 PROTECTED LOGIN / REGISTER SCREEN GATEWAYS      */}
@@ -2344,11 +2394,13 @@ export default function App() {
         {/* ==================================================== */}
         {/* 2.9 MODERATION & ADMINISTRATION SCREEN PANELS        */}
         {/* ==================================================== */}
-        {route === "my-library" && currentUser && (
-          <BibliothequeView
-            stories={stories}
-            onSelectStory={handleOpenStoryReader}
-          />
+        {currentUser && (
+          <div style={{ display: route === "my-library" ? "block" : "none" }}>
+            <BibliothequeView
+              stories={stories}
+              onSelectStory={handleOpenStoryReader}
+            />
+          </div>
         )}
 
         {route === "moderation" && currentUser && (currentUser.role === "MODERATOR" || currentUser.role === "ADMIN" || currentUser.role === "SUPER_ADMIN" || currentUser.role === "FOUNDER_OWNER") && (
@@ -2432,6 +2484,86 @@ export default function App() {
                 className="text-[10px] font-mono text-slate-500 hover:text-slate-300 underline cursor-pointer mt-1"
               >
                 Continuer l'exploration libre
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 3.5 APPLICATION RESET & FORMATTER CONFIRMATION MODAL */}
+      {/* ==================================================== */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="w-full max-w-md bg-[#0D0E12] border border-rose-550/20 rounded-3xl p-6 md:p-8 flex flex-col items-center text-center gap-6 shadow-2xl relative animate-fade-in">
+            
+            {/* Pulsing Caution Icon */}
+            <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center animate-pulse">
+              <AlertCircle className="w-8 h-8 text-rose-500" />
+            </div>
+
+            {/* Warning Message header */}
+            <div className="flex flex-col gap-2">
+              <h3 className="font-sans font-black text-lg md:text-xl text-rose-400 uppercase tracking-tight">
+                ⚠️ FORMATER L'APPLICATION ?
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed font-sans font-medium">
+                Cette action va réinitialiser l'intégralité de l'application Stilova à son état d'usine d'origine.
+              </p>
+            </div>
+
+            {/* Technical Detail List */}
+            <div className="w-full bg-slate-950/80 rounded-2xl p-4 text-left border border-slate-800 text-[10px] font-mono text-slate-350 flex flex-col gap-2 leading-relaxed">
+              <span className="text-rose-400 font-bold uppercase tracking-wider text-[9px]">Éléments supprimés :</span>
+              <p className="flex items-start gap-1.5">
+                <span className="text-rose-500">•</span>
+                <span>Déconnexion complète de la session active</span>
+              </p>
+              <p className="flex items-start gap-1.5">
+                <span className="text-rose-500">•</span>
+                <span>Vidage de tous les caches d'affichage rapide (SWR)</span>
+              </p>
+              <p className="flex items-start gap-1.5">
+                <span className="text-rose-500">•</span>
+                <span>Réinitialisation des livres créés dans l'Atelier</span>
+              </p>
+              <p className="flex items-start gap-1.5">
+                <span className="text-rose-500">•</span>
+                <span>Restauration des récits et chapitres d'usine</span>
+              </p>
+            </div>
+
+            <p className="text-[10px] text-slate-500">
+              C'est idéal pour tester le produit à blanc ou corriger un problème d'affichage lié au navigateur.
+            </p>
+
+            {/* Actions Buttons */}
+            <div className="flex flex-col gap-2 w-full mt-2">
+              <button
+                onClick={handleResetApplication}
+                disabled={isResetting}
+                className="w-full bg-gradient-to-r from-rose-600 to-red-500 hover:from-rose-500 hover:to-red-400 text-white font-sans font-extrabold py-3.5 rounded-2xl text-xs uppercase tracking-widest cursor-pointer transition shadow-lg shadow-rose-950/20 active:scale-98 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Formatage en cours...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Confirmer le formatage</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsResetModalOpen(false)}
+                disabled={isResetting}
+                className="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white font-sans font-semibold py-3 rounded-2xl text-xs cursor-pointer transition"
+              >
+                Annuler et fermer
               </button>
             </div>
 
