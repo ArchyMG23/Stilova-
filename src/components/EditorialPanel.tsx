@@ -123,7 +123,7 @@ export default function EditorialPanel({ stories, onRefreshStories, currentUser 
   };
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto px-4 pb-16 animate-fade-in">
+    <div className="flex flex-col gap-8 w-full max-w-[1440px] mx-auto px-4 pb-16 animate-fade-in">
       
       {/* Editorial Header */}
       <div className="bg-gradient-to-r from-slate-900 via-[#182245]/20 to-transparent p-6 rounded-3xl border border-slate-805 flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-lg">

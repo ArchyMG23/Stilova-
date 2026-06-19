@@ -208,7 +208,7 @@ export default function BibliothequeView({ stories, onSelectStory }: Bibliothequ
   };
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto px-4 pb-16 animate-fade-in">
+    <div className="flex flex-col gap-8 w-full max-w-[1440px] mx-auto px-4 pb-16 animate-fade-in">
       
       {/* Brand Page Cover */}
       <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 p-8 rounded-3xl border border-slate-800 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">

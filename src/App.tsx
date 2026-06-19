@@ -620,8 +620,9 @@ export default function App() {
       
       setIsCreateModalOpen(false);
       
-      // Auto focus writing to this story
+      // Auto focus writing to this story and direct to the workspace
       handleFocusStoryAtelier(newBook);
+      changeRoute("atelier");
     } catch (err: any) {
       console.error("Book creation failed", err);
       setBookCreationError(err?.message || "Une erreur imprévue a refusé l'écriture de l'œuvre.");
@@ -632,41 +633,55 @@ export default function App() {
 
   // Launch writing board for a specific story
   const handleFocusStoryAtelier = async (story: Story) => {
-    setWritingStory(story);
-    setEditorSubTab("content");
-    
-    // Init Story typography states
-    setStoryTitleFont(story.title_font || "Cormorant Garamond");
-    setStoryTitleFontWeight(story.title_font_weight || "normal");
-    setStorySignatureFont(story.signature_font || "Great Vibes");
-    setStorySignatureColor(story.signature_color || "amber-500");
-    setStorySignatureAlign(story.signature_alignment || "right");
-    setStoryAutoSignatureEnabled(!!story.auto_signature_enabled);
-    setStoryDefaultSignature(story.default_signature || `Merci d'avoir lu ce chapitre.\n— ${story.authorName}`);
-
-    const nodesList = await dbService.listStoryNodes(story.id);
-    setActiveNodes(nodesList);
-
-    const root = nodesList.find(n => n.isRoot) || nodesList[0] || null;
-    setEditingNode(root);
-
-    if (root) {
-      setNewNodeTitle(root.title);
-      setNewNodeContent(root.content);
-      setIsRootNode(root.isRoot);
+    try {
+      setWritingStory(story);
+      setEditorSubTab("content");
       
-      // Init Node signature states
-      setChapterSignatureText(root.custom_signature || "");
-      setChapterSignatureEnabled(!!root.custom_signature);
-      setChapterSignatureFont(root.custom_signature_font || "Great Vibes");
-      setChapterSignatureColor(root.custom_signature_color || "amber-500");
-      setChapterSignatureAlign(root.custom_signature_alignment || "right");
-    } else {
-      setChapterSignatureText("");
-      setChapterSignatureEnabled(false);
-      setChapterSignatureFont("Great Vibes");
-      setChapterSignatureColor("amber-500");
-      setChapterSignatureAlign("right");
+      // Init Story typography states
+      setStoryTitleFont(story.title_font || "Cormorant Garamond");
+      setStoryTitleFontWeight(story.title_font_weight || "normal");
+      setStorySignatureFont(story.signature_font || "Great Vibes");
+      setStorySignatureColor(story.signature_color || "amber-500");
+      setStorySignatureAlign(story.signature_alignment || "right");
+      setStoryAutoSignatureEnabled(!!story.auto_signature_enabled);
+      setStoryDefaultSignature(story.default_signature || `Merci d'avoir lu ce chapitre.\n— ${story.authorName}`);
+
+      const nodesList = await dbService.listStoryNodes(story.id).catch(err => {
+        console.warn("[Atelier] Erreur Firestore lors de l'accès aux chapitres. Chargement local sécurisé:", err);
+        let cached: Record<string, StoryNode[]> = {};
+        try {
+          cached = JSON.parse(localStorage.getItem("stilova_cache_nodes") || "{}");
+        } catch (_) {}
+        return cached[story.id] || [];
+      });
+      setActiveNodes(nodesList || []);
+
+      const root = (nodesList || []).find(n => n.isRoot) || (nodesList || [])[0] || null;
+      setEditingNode(root);
+
+      if (root) {
+        setNewNodeTitle(root.title);
+        setNewNodeContent(root.content);
+        setIsRootNode(root.isRoot);
+        
+        // Init Node signature states
+        setChapterSignatureText(root.custom_signature || "");
+        setChapterSignatureEnabled(!!root.custom_signature);
+        setChapterSignatureFont(root.custom_signature_font || "Great Vibes");
+        setChapterSignatureColor(root.custom_signature_color || "amber-500");
+        setChapterSignatureAlign(root.custom_signature_alignment || "right");
+      } else {
+        setNewNodeTitle("");
+        setNewNodeContent("");
+        setIsRootNode(false);
+        setChapterSignatureText("");
+        setChapterSignatureEnabled(false);
+        setChapterSignatureFont("Great Vibes");
+        setChapterSignatureColor("amber-500");
+        setChapterSignatureAlign("right");
+      }
+    } catch (err: any) {
+      console.error("[Atelier] Échec d'affichage de l'identité graphique / nœuds:", err);
     }
   };
 
@@ -879,19 +894,19 @@ export default function App() {
           </div>
 
           {/* Navigation Links with unified capsule design & interactive sliding motion background */}
-          <nav className="flex items-center gap-1 sm:gap-1.5 bg-slate-950/40 p-1.5 rounded-2xl border border-slate-850/60 backdrop-blur-sm shadow-inner">
+          <nav className="flex items-center gap-1 sm:gap-1.5 bg-slate-950/40 p-1.5 rounded-2xl border border-slate-850/60 backdrop-blur-sm shadow-inner overflow-x-auto max-w-full scrollbar-none shrink select-none">
             {(() => {
               const role = currentUser?.role || "VISITOR";
               let menuItems = [
                 { label: "Accueil", route: "landing", icon: Home },
-                { label: "Catalogue", route: "discover", icon: BookOpen },
+                { label: "Catalogue", route: "discover", icon: Compass },
                 { label: "Concours", route: "contests", icon: Trophy },
               ];
 
               if (role === "READER") {
                 menuItems = [
                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
                   { label: "Concours", route: "contests", icon: Trophy },
                   { label: "Mon Profil", route: "profile", icon: User },
@@ -899,16 +914,16 @@ export default function App() {
               } else if (role === "AUTHOR") {
                 menuItems = [
                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
-                  { label: "Mes Histoires", route: "atelier", icon: PenTool },
+                  { label: "Mon Atelier", route: "atelier", icon: PenTool },
                   { label: "Concours", route: "contests", icon: Trophy },
                   { label: "Mon Profil", route: "profile", icon: User },
                 ];
               } else if (role === "EDITOR") {
                 menuItems = [
                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
                   { label: "Comité Édito", route: "editorial", icon: BookMarked },
                   { label: "Concours", route: "contests", icon: Trophy },
@@ -917,7 +932,7 @@ export default function App() {
               } else if (role === "MODERATOR") {
                 menuItems = [
                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
                   { label: "Modération", route: "moderation", icon: ShieldAlert },
                   { label: "Concours", route: "contests", icon: Trophy },
@@ -925,8 +940,8 @@ export default function App() {
                 ];
               } else if (role === "ADMIN") {
                 menuItems = [
-                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Accueil", route: "landing", icon: Home },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
                   { label: "Administration", route: "admin", icon: Sliders },
                   { label: "Modération", route: "moderation", icon: ShieldAlert },
@@ -936,9 +951,9 @@ export default function App() {
               } else if (role === "SUPER_ADMIN" || role === "FOUNDER_OWNER") {
                 menuItems = [
                   { label: "Accueil", route: "landing", icon: Home },
-                  { label: "Découvrir", route: "discover", icon: Compass },
+                  { label: "Catalogue", route: "discover", icon: Compass },
                   { label: "Bibliothèque", route: "my-library", icon: BookOpen },
-                  { label: "Écriture", route: "atelier", icon: PenTool },
+                  { label: "Mon Atelier", route: "atelier", icon: PenTool },
                   { label: "Administration", route: "admin", icon: Sliders },
                   { label: "Modération", route: "moderation", icon: ShieldAlert },
                   { label: "Concours", route: "contests", icon: Trophy },
@@ -955,7 +970,7 @@ export default function App() {
                     onClick={() => changeRoute(item.route)}
                     onMouseEnter={() => prefetchRouteData(item.route)}
                     onTouchStart={() => prefetchRouteData(item.route)}
-                    className={`relative px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors duration-200 select-none outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 ${
+                    className={`relative px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors duration-200 select-none outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 shrink-0 ${
                       isItemActive
                         ? "text-slate-950 font-bold"
                         : "text-slate-400 hover:text-slate-200 active:scale-95"
@@ -968,9 +983,9 @@ export default function App() {
                         transition={{ type: "spring", stiffness: 350, damping: 26 }}
                       />
                     )}
-                    <span className="relative z-10 flex items-center gap-1.5">
-                      <IconComponent className="w-3.5 h-3.5" />
-                      <span className="hidden lg:inline">{item.label}</span>
+                    <span className="relative z-10 flex items-center gap-1.5 shrink-0">
+                      <IconComponent className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden lg:inline whitespace-nowrap">{item.label}</span>
                     </span>
                   </button>
                 );
@@ -1082,7 +1097,7 @@ export default function App() {
                 ✨ L'UNIVERS LITTÉRAIRE PANAFRICAIN INTERACTIF
               </span>
 
-              <div className="w-20 h-20 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-1">
+              <div className="w-24 h-24 sm:w-32 sm:h-32 md:w-36 md:h-36 lg:w-40 lg:h-40 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-1 transition duration-300 hover:scale-105 hover:border-amber-400">
                 <img
                   src={BrandLogo}
                   alt="Stilova"

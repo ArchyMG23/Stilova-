@@ -162,7 +162,7 @@ export default function ContestsView({ currentUserUid, currentUserRole, myStorie
   }
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-7xl mx-auto px-4">
+    <div className="flex flex-col gap-8 w-full max-w-[1440px] mx-auto px-4">
       
       {/* Page Title banner */}
       <div className="bg-gradient-to-r from-amber-550/15 via-indigo-950/20 to-transparent p-6 rounded-3xl border border-slate-800">

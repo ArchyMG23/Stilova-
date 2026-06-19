@@ -339,7 +339,7 @@ export default function UserProfileView({
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 animate-fade-in mb-16">
+    <div className="w-full max-w-[1440px] mx-auto flex flex-col lg:flex-row gap-8 animate-fade-in mb-16">
       
       {/* SIDE PROFILE NAVIGATION CONTROLS */}
       <div className="w-full lg:w-72 shrink-0 flex flex-col gap-6">

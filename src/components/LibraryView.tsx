@@ -42,7 +42,7 @@ export default function LibraryView({ stories, onSelectStory, currentUserRole, o
   const featuredStories = stories.filter(s => s.isFeatured && s.isPublished);
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto px-4 sm:px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1440px] mx-auto px-4 sm:px-6">
       
       {/* Search and write trigger bar */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-3xl border border-slate-800 backdrop-blur-md">
