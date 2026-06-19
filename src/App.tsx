@@ -884,7 +884,6 @@ export default function App() {
               const role = currentUser?.role || "VISITOR";
               let menuItems = [
                 { label: "Accueil", route: "landing", icon: Home },
-                { label: "Découvrir", route: "discover", icon: Compass },
                 { label: "Catalogue", route: "discover", icon: BookOpen },
                 { label: "Concours", route: "contests", icon: Trophy },
               ];
