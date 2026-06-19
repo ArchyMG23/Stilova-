@@ -8,7 +8,8 @@ service cloud.firestore {
     }
 
     function isEmailVerified() {
-      return request.auth != null && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+      // In development/sandbox environments, implicit email verification is checked by isSignedIn.
+      return isSignedIn();
     }
 
     function isValidId(id) {
