@@ -73,16 +73,39 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
     }
 
     setUploading(true);
-    try {
-      // Define draft id or session key if story id is not created yet
-      const activeStoryId = storyId || "draft_" + Date.now();
-      const uploadedUrl = await StorageService.uploadStoryCover(file, activeStoryId, userId, userRole);
-      onCoverChanged(uploadedUrl);
-    } catch (err: any) {
-      setError(err?.message || "Erreur de téléversement dans l'espace Supabase Storage.");
-    } finally {
+    
+    // First, read the file locally as a DataURL to have a guaranteed offline fallback
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const localDataUrl = e.target?.result as string;
+      if (!localDataUrl) {
+        setUploading(false);
+        setError("Impossible de décoder localement l'image.");
+        return;
+      }
+
+      try {
+        console.log("[Stilova CoverUploader] Attempting to upload cover to Supabase Storage...");
+        const activeStoryId = storyId || "draft_" + Date.now();
+        const uploadedUrl = await StorageService.uploadStoryCover(file, activeStoryId, userId, userRole);
+        onCoverChanged(uploadedUrl);
+        console.log("[Stilova CoverUploader] Uploaded to Supabase successfully:", uploadedUrl);
+      } catch (err: any) {
+        console.warn("[Stilova CoverUploader] Supabase upload failed, using local offline DataURL copy instead:", err);
+        // Fallback to local DataURL
+        onCoverChanged(localDataUrl);
+        setError("Note : Supabase Storage hors-ligne ou non configuré dans l'iframe. Votre couverture d'œuvre a été importée avec succès en local (Cache local actif).");
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    reader.onerror = () => {
       setUploading(false);
-    }
+      setError("Erreur lors de la lecture du fichier image local.");
+    };
+
+    reader.readAsDataURL(file);
   };
 
   const onDragOver = (e: React.DragEvent) => {
