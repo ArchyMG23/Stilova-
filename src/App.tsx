@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import BrandLogo from "./assets/images/stilova_icon_favicon_1781546886601.jpg";
 import { UserProfile, Story, StoryNode, UserRole, AfricanGenre } from "./types";
 import { auth, dbService, bootstrapLocalData, seedCloudFirestore } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
@@ -856,7 +857,7 @@ export default function App() {
       
       {/* 1. IMMERSIVE BRAND HEADER NAVIGATION */}
       <header className="h-16 border-b border-slate-800/60 bg-[#0F1117]/85 flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40 backdrop-blur-md shadow-sm">
-        <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-4">
+        <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-4">
           
           {/* Logo brand */}
           <div 
@@ -865,7 +866,7 @@ export default function App() {
           >
             <div className="w-10 h-10 rounded-full border border-amber-500/30 overflow-hidden flex items-center justify-center bg-slate-950 transition duration-300 group-hover:scale-105 group-hover:border-amber-400 shadow-md shadow-amber-500/10">
               <img
-                src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                src={BrandLogo}
                 alt="Stilova"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
@@ -1040,7 +1041,7 @@ export default function App() {
       </header>
 
       {/* 2. CORE SCREEN RECONCILIATOR */}
-      <main className="max-w-7xl mx-auto w-full mt-6 flex-1 px-4 sm:px-6">
+      <main className="max-w-[1440px] mx-auto w-full mt-6 flex-1 px-4 sm:px-6">
         
         {/* ==================================================== */}
         {/* 2.0 BANNED / SUSPENDED ESCAPE PORTAL                  */}
@@ -1084,7 +1085,7 @@ export default function App() {
 
               <div className="w-20 h-20 rounded-full border-2 border-amber-500/30 overflow-hidden shadow-2xl bg-slate-950 mt-1">
                 <img
-                  src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                  src={BrandLogo}
                   alt="Stilova"
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
@@ -1445,7 +1446,7 @@ export default function App() {
               <div className="text-center flex flex-col items-center gap-1">
                 <div className="w-14 h-14 rounded-full border border-amber-500/30 overflow-hidden shadow-lg bg-slate-950">
                   <img
-                    src="/src/assets/images/stilova_icon_favicon_1781546886601.jpg"
+                    src={BrandLogo}
                     alt="Stilova"
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
