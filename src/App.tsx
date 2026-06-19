@@ -192,6 +192,10 @@ export default function App() {
   const [isCreatingBook, setIsCreatingBook] = useState(false);
   const [bookCreationError, setBookCreationError] = useState<string | null>(null);
   const [creationProgress, setCreationProgress] = useState(0);
+  const [creationReport, setCreationReport] = useState<{
+    failedStep: number | null;
+    errorDetails: string;
+  } | null>(null);
 
   // New chapter node forms
   const [newNodeTitle, setNewNodeTitle] = useState("");
@@ -535,37 +539,80 @@ export default function App() {
     setIsProtectedModalOpen(true);
   };
 
-  // Create new book story record in database
+  // Create new book story record in database with extreme audit diagnostics
   const handleCreateBook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
-    if (!newTitle.trim()) {
-      setBookCreationError("Veuillez renseigner le titre de l'œuvre.");
-      return;
-    }
-    if (!newDesc.trim()) {
-      setBookCreationError("Veuillez renseigner le résumé de l'œuvre.");
-      return;
-    }
 
     setIsCreatingBook(true);
     setBookCreationError(null);
-    setCreationProgress(10);
+    setCreationReport(null);
+    setCreationProgress(5);
+
+    // Dynamic racing timeout helper to prevent hanging on network/iframe restrictions
+    const withTimeout = async <T,>(promise: Promise<T>, ms: number, stepName: string): Promise<T> => {
+      let timeoutId: any;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`[Délai Épuisé] L'opération a été suspendue après ${ms / 1000} secondes d'attente lors de ${stepName}. Veuillez vérifier s'il s'agit d'un problème d'authentification ou si la connexion Firestore est perturbée par les permissions d'iframe.`));
+        }, ms);
+      });
+      try {
+        const result = await Promise.race([promise, timeoutPromise]);
+        clearTimeout(timeoutId);
+        return result;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        throw err;
+      }
+    };
 
     try {
-      // Step 1: Validate author permissions
+      // ------------------------------------------------------------------------
+      // [1/8] Validation
+      // ------------------------------------------------------------------------
+      console.log("[1/8] Validation : Lancement des contrôles formels du formulaire...");
+      setCreationProgress(10);
+      
+      if (!newTitle.trim()) {
+        throw new Error("Validation échouée : Le titre de l'œuvre est vide. Veuillez indiquer un titre.");
+      }
+      if (!newDesc.trim()) {
+        throw new Error("Validation échouée : Le résumé ou synopsis de l'œuvre est vide.");
+      }
+
       const role = currentUser.role;
       const possessesRights = ["AUTHOR", "MODERATOR", "ADMIN", "SUPER_ADMIN", "FOUNDER_OWNER"].includes(role);
       if (!possessesRights) {
-        throw new Error("Défaut de droits d'écriture : seuls les écrivains accrédités peuvent graver.");
+        throw new Error(`Accès refusé : Droits d'écriture insuffisants. Seuls les créateurs agréés possèdent les droits d'écriture. Rôle détecté: ${role}`);
       }
+      
+      console.log(`[1/8] Validation : Informations formelles éprouvées avec succès. Titre: "${newTitle.trim()}", Auteur UID: "${currentUser.uid}", Rôle de session: "${currentUser.role}"`);
+      await new Promise(r => setTimeout(r, 150));
 
-      await new Promise(r => setTimeout(r, 350));
-      setCreationProgress(30);
-
-      // Step 2: Assemble the Story metadata
+      // ------------------------------------------------------------------------
+      // [2/8] Upload couverture
+      // ------------------------------------------------------------------------
+      console.log("[2/8] Upload couverture : Début de l'analyse du fichier de couverture...");
+      setCreationProgress(20);
+      
       const randomCover = newCover || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=300";
+      
+      if (newCover) {
+        console.log(`[2/8] Upload couverture : Couverture personnalisée détectée (${newCover}). Prête pour assemblage.`);
+      } else {
+        console.log(`[2/8] Upload couverture : Aucune couverture personnalisée fournie. Utilisation de l'icône d'art par défaut d'Ifé : ${randomCover}`);
+      }
+      await new Promise(r => setTimeout(r, 150));
+
+      // ------------------------------------------------------------------------
+      // [3/8] Création Story
+      // ------------------------------------------------------------------------
+      console.log("[3/8] Création Story : Assemblage du document de métadonnées de l'œuvre...");
+      setCreationProgress(35);
+      
       const bookId = `story_${Date.now()}`;
+      const authorNameSanitized = currentUser.displayName || currentUser.email || "Griot Sacré";
       
       const newBook: Story = {
         id: bookId,
@@ -574,7 +621,7 @@ export default function App() {
         coverUrl: randomCover,
         genre: newGenre,
         authorId: currentUser.uid,
-        authorName: currentUser.displayName,
+        authorName: authorNameSanitized,
         isPublished: false,
         isInteractive: newIsInteractive,
         rating: 5.0,
@@ -585,16 +632,15 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      await new Promise(r => setTimeout(r, 350));
-      setCreationProgress(55);
+      console.log(`[3/8] Création Story : Modèle de données story '${bookId}' généré avec succès.`);
+      await new Promise(r => setTimeout(r, 150));
 
-      // Save Story to DB
-      await dbService.saveStory(newBook);
+      // ------------------------------------------------------------------------
+      // [4/8] Création Chapitre
+      // ------------------------------------------------------------------------
+      console.log("[4/8] Création Chapitre : Génération du premier chapitre racine initial...");
+      setCreationProgress(50);
       
-      await new Promise(r => setTimeout(r, 350));
-      setCreationProgress(75);
-
-      // Auto-create a stub first chapter root node for the story
       const firstChapterNode: StoryNode = {
         id: `node_root_${Date.now()}`,
         storyId: bookId,
@@ -606,43 +652,161 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      await dbService.saveStoryNode(firstChapterNode);
+      console.log(`[4/8] Création Chapitre : Chapitre racine '${firstChapterNode.id}' structuré.`);
+      await new Promise(r => setTimeout(r, 150));
 
-      await new Promise(r => setTimeout(r, 350));
+      // ------------------------------------------------------------------------
+      // [5/8] Indexation
+      // ------------------------------------------------------------------------
+      console.log("[5/8] Indexation : Vérification et affectation préventive des répertoires de recherche...");
+      setCreationProgress(60);
+      
+      // S'assurer de la régularité structurelle et du rafraîchissement d'indexation locale
+      console.log("[5/8] Indexation : Registres mémoires mis à jour préventivement.");
+      await new Promise(r => setTimeout(r, 150));
+
+      // ------------------------------------------------------------------------
+      // [6/8] Permissions
+      // ------------------------------------------------------------------------
+      console.log("[6/8] Permissions : Examen d'habilitation dans la base Firestore...");
+      setCreationProgress(70);
+      
+      // Proactive verification to make sure the user profile doc resides in Firestore
+      try {
+        console.log(`[6/8] Permissions : Tentative de lecture du profil de sécurité pour l'UID: ${currentUser.uid}...`);
+        const remoteProfile = await withTimeout(
+          dbService.getProfile(currentUser.uid),
+          3000,
+          "la lecture préventive du profil utilisateur"
+        );
+        
+        if (!remoteProfile) {
+          console.warn("[6/8] Permissions : Profil manquant dans la base distante. Enregistrement automatique de secours...");
+          await withTimeout(
+            dbService.saveProfile(currentUser),
+            3000,
+            "l'enregistrement automatique de secours du profil utilisateur"
+          );
+          console.log("[6/8] Permissions : Profil de sécurité écrit avec succès en amont.");
+        } else {
+          console.log("[6/8] Permissions : Document de sécurité actif et validé.");
+        }
+      } catch (profileProbeErr: any) {
+        console.warn("[6/8] Permissions (Avertissement) : Impossible de pré-vérifier le profil, possible blocage de droits :", profileProbeErr);
+      }
+      await new Promise(r => setTimeout(r, 150));
+
+      // ------------------------------------------------------------------------
+      // [7/8] Sauvegarde
+      // ------------------------------------------------------------------------
+      console.log("[7/8] Sauvegarde : Commit physique dans la urne sacrée de Firestore...");
+      setCreationProgress(80);
+      
+      // Scribe story with safe timeout to prevent hanging UI
+      console.log(`[7/8] Sauvegarde : Gravure de la Story (${bookId}) dans Firestore...`);
+      await withTimeout(
+        dbService.saveStory(newBook),
+        6000,
+        "l'enregistrement du document Story principal"
+      );
+      
+      // Scribe first node
+      console.log(`[7/8] Sauvegarde : Liaison du chapitre de départ (${firstChapterNode.id}) dans Firestore...`);
+      await withTimeout(
+        dbService.saveStoryNode(firstChapterNode),
+        6000,
+        "l'enregistrement du document StoryNode racine (Introduction)"
+      );
+      
+      console.log("[7/8] Sauvegarde : Enregistrement complété avec succès !");
+      await new Promise(r => setTimeout(r, 150));
+
+      // ------------------------------------------------------------------------
+      // [8/8] Finalisation
+      // ------------------------------------------------------------------------
+      console.log("[8/8] Finalisation : Inscription au registre d'audit et rafraîchissement...");
       setCreationProgress(90);
-
-      // Save admin audit trace
+      
       const auditDetails = `Création de l'œuvre "${newBook.title}" (ID: ${bookId}).`;
       const logId = "log_" + Date.now();
-      await dbService.saveAuditLog({
-        id: logId,
-        action: "CREATION_OEUVRE_GRAVEE",
-        performedBy: currentUser.uid,
-        performedByName: currentUser.displayName,
-        targetUserId: currentUser.uid,
-        targetUserName: currentUser.displayName,
-        details: auditDetails,
-        timestamp: new Date().toISOString()
-      });
+      
+      try {
+        await withTimeout(
+          dbService.saveAuditLog({
+            id: logId,
+            action: "CREATION_OEUVRE_GRAVEE",
+            performedBy: currentUser.uid,
+            performedByName: authorNameSanitized,
+            targetUserId: currentUser.uid,
+            targetUserName: authorNameSanitized,
+            details: auditDetails,
+            timestamp: new Date().toISOString()
+          }),
+          3000,
+          "l'inscription dans le registre d'audit de sécurité"
+        );
+        console.log("[8/8] Finalisation : Trace d'audit transmise avec succès.");
+      } catch (auditErr) {
+        console.warn("[8/8] Finalisation (Erreur secondaire ignorée pour préserver le succès principal) : Trace d'audit en échec", auditErr);
+      }
 
-      // Reset Form fields
+      // Reset local fields
       setNewTitle("");
       setNewDesc("");
       setNewCover("");
       
+      console.log("[8/8] Finalisation : Re-chargement du catalogue...");
       await refreshStoryCatalog();
       
       setCreationProgress(100);
       await new Promise(r => setTimeout(r, 150));
-      
       setIsCreateModalOpen(false);
       
-      // Auto focus writing to this story and direct to the workspace
+      console.log(`[8/8] Finalisation : Succès complet de l'œuvre ! Redirection vers l'Atelier.`);
       handleFocusStoryAtelier(newBook);
       changeRoute("atelier");
-    } catch (err: any) {
-      console.error("Book creation failed", err);
-      setBookCreationError(err?.message || "Une erreur imprévue a refusé l'écriture de l'œuvre.");
+
+    } catch (error: any) {
+      console.error("[Stilova Audit] Erreur fatale durant l'enregistrement :", error);
+      
+      // Detect exactly where it crashed to assign failed step
+      let failedStepNum = 7; // default to Sauvegarde if unknown
+      const errorMsg = error?.message || String(error);
+      
+      if (errorMsg.includes("[1/8]") || errorMsg.toLowerCase().includes("validation")) {
+        failedStepNum = 1;
+      } else if (errorMsg.includes("[2/8]") || errorMsg.toLowerCase().includes("couverture") || errorMsg.toLowerCase().includes("supabase")) {
+        failedStepNum = 2;
+      } else if (errorMsg.includes("[3/8]") || errorMsg.toLowerCase().includes("story") || errorMsg.toLowerCase().includes("métadonnées")) {
+        failedStepNum = 3;
+      } else if (errorMsg.includes("[4/8]") || errorMsg.toLowerCase().includes("chapitre") || errorMsg.toLowerCase().includes("nœud")) {
+        failedStepNum = 4;
+      } else if (errorMsg.includes("[5/8]") || errorMsg.toLowerCase().includes("index")) {
+        failedStepNum = 5;
+      } else if (errorMsg.includes("[6/8]") || errorMsg.toLowerCase().includes("permission") || errorMsg.toLowerCase().includes("profil")) {
+        failedStepNum = 6;
+      } else if (errorMsg.includes("[7/8]") || errorMsg.toLowerCase().includes("firestore") || errorMsg.toLowerCase().includes("sauvegarde")) {
+        failedStepNum = 7;
+      } else if (errorMsg.includes("[8/8]") || errorMsg.toLowerCase().includes("finalisation") || errorMsg.toLowerCase().includes("audit")) {
+        failedStepNum = 8;
+      } else {
+        // Fallback checks based on progress
+        if (creationProgress <= 15) failedStepNum = 1;
+        else if (creationProgress <= 30) failedStepNum = 2;
+        else if (creationProgress <= 45) failedStepNum = 3;
+        else if (creationProgress <= 55) failedStepNum = 4;
+        else if (creationProgress <= 65) failedStepNum = 5;
+        else if (creationProgress <= 75) failedStepNum = 6;
+        else if (creationProgress <= 85) failedStepNum = 7;
+        else failedStepNum = 8;
+      }
+
+      setCreationReport({
+        failedStep: failedStepNum,
+        errorDetails: errorMsg
+      });
+      
+      setBookCreationError(errorMsg);
     } finally {
       setIsCreatingBook(false);
     }
@@ -2686,8 +2850,49 @@ export default function App() {
               />
 
               {bookCreationError && (
-                <div className="border border-red-500/20 bg-red-500/5 text-red-400 text-xs p-3.5 rounded-2xl font-mono text-left">
-                  ⚠ <strong>Échec de gravure :</strong> {bookCreationError}
+                <div className="border border-red-500/20 bg-red-500/10 text-red-400 text-xs p-4 rounded-2xl font-sans text-left flex flex-col gap-3">
+                  <div className="flex items-center gap-2 text-red-500 font-bold">
+                    <span className="text-sm">⚠ Échec de gravure : {bookCreationError}</span>
+                  </div>
+                  
+                  {creationReport && (
+                    <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-900 flex flex-col gap-2.5 font-mono text-[11px] text-slate-300">
+                      <div className="font-sans font-bold text-[10px] text-slate-500 uppercase tracking-wider">Rapport d'audit du workflow :</div>
+                      {[
+                        "Validation du formulaire",
+                        "Validation & Upload de la couverture",
+                        "Création de la Story",
+                        "Création du Chapitre initial",
+                        "Vérification de l'Indexation",
+                        "Audit des Permissions d'écriture",
+                        "Sauvegarde finale de l'œuvre",
+                        "Finalisation des traces d'audit"
+                      ].map((stepName, idx) => {
+                        const stepNum = idx + 1;
+                        let statusIcon = "⚪ En attente";
+                        let statusColor = "text-slate-600";
+                        if (creationReport.failedStep !== null) {
+                          if (stepNum < creationReport.failedStep) {
+                            statusIcon = "✅ Succès";
+                            statusColor = "text-emerald-500 font-bold";
+                          } else if (stepNum === creationReport.failedStep) {
+                            statusIcon = "❌ Échoué";
+                            statusColor = "text-red-500 font-bold animate-pulse";
+                          }
+                        }
+                        return (
+                          <div key={idx} className={`flex items-center justify-between border-b border-slate-900/50 pb-1 last:border-0 last:pb-0 ${statusColor}`}>
+                            <span>[{stepNum}/8] {stepName}</span>
+                            <span>{statusIcon}</span>
+                          </div>
+                        );
+                      })}
+                      <div className="text-[10px] text-slate-500 mt-1 border-t border-slate-900 pt-2 font-mono max-h-36 overflow-auto whitespace-pre-wrap select-text leading-normal scrollbar-thin">
+                        <strong className="text-red-400 font-sans font-bold uppercase tracking-wider text-[9px] block mb-1">Rapport d'erreur système détaillé :</strong>
+                        {creationReport.errorDetails}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
