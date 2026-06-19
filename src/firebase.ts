@@ -296,45 +296,58 @@ const SEED_COMPETITIONS: Competition[] = [
 
 // Offline Local Database cache
 const getLocal = <T>(key: string, def: T): T => {
-  const v = localStorage.getItem(`stilova_cache_${key}`);
-  return v ? JSON.parse(v) : def;
+  try {
+    const v = localStorage.getItem(`stilova_cache_${key}`);
+    return v ? JSON.parse(v) : def;
+  } catch (e) {
+    console.warn(`[Stilova Local Engine] Error parsing local storage key: stilova_cache_${key}`, e);
+    return def;
+  }
 };
 
 const setLocal = <T>(key: string, val: T): T => {
-  localStorage.setItem(`stilova_cache_${key}`, JSON.stringify(val));
+  try {
+    localStorage.setItem(`stilova_cache_${key}`, JSON.stringify(val));
+  } catch (e) {
+    console.warn(`[Stilova Local Engine] Error writing local storage key: stilova_cache_${key}`, e);
+  }
   return val;
 };
 
 // Initialize seed data inside local storage on boot
 export function bootstrapLocalData() {
-  if (!localStorage.getItem("stilova_cache_stories")) {
-    setLocal("stories", SEED_STORIES);
+  try {
+    if (!localStorage.getItem("stilova_cache_stories")) {
+      setLocal("stories", SEED_STORIES);
+    }
+    if (!localStorage.getItem("stilova_cache_competitions")) {
+      setLocal("competitions", SEED_COMPETITIONS);
+    }
+    if (!localStorage.getItem("stilova_cache_nodes")) {
+      setLocal("nodes", SEED_NODES);
+    }
+    if (!localStorage.getItem("stilova_cache_submissions")) {
+      setLocal("submissions", [
+        {
+          id: "sub_afro_dakar",
+          competitionId: "comp_afrofuturism_2026",
+          storyId: "story_afrofuturism_dakar",
+          storyTitle: "Les Sentinelles de Goree-2099",
+          authorId: "admin_seed_griot",
+          authorName: "Abdoulaye Diallo",
+          votesCount: 42,
+          status: "approved",
+          createdAt: new Date().toISOString()
+        }
+      ]);
+    }
+    if (!localStorage.getItem("stilova_cache_votes")) {
+      setLocal("votes", []);
+    }
+    console.log("[Stilova Local Engine] Offline-First repositories bootstrapped.");
+  } catch (err) {
+    console.warn("[Stilova Local Engine] Failure during offline bootstrapping:", err);
   }
-  if (!localStorage.getItem("stilova_cache_competitions")) {
-    setLocal("competitions", SEED_COMPETITIONS);
-  }
-  if (!localStorage.getItem("stilova_cache_nodes")) {
-    setLocal("nodes", SEED_NODES);
-  }
-  if (!localStorage.getItem("stilova_cache_submissions")) {
-    setLocal("submissions", [
-      {
-        id: "sub_afro_dakar",
-        competitionId: "comp_afrofuturism_2026",
-        storyId: "story_afrofuturism_dakar",
-        storyTitle: "Les Sentinelles de Goree-2099",
-        authorId: "admin_seed_griot",
-        authorName: "Abdoulaye Diallo",
-        votesCount: 42,
-        status: "approved",
-        createdAt: new Date().toISOString()
-      }
-    ]);
-  }
-  if (!localStorage.getItem("stilova_cache_votes")) {
-    setLocal("votes", []);
-  }
-  console.log("[Stilova Local Engine] Offline-First repositories bootstrapped.");
 }
 
 // ----------------------------------------------------

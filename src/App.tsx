@@ -224,14 +224,31 @@ export default function App() {
 
   // Bootstrap cache system and listen to Auth states
   useEffect(() => {
-    // 1. Launch offline initial records
-    bootstrapLocalData();
+    // A safeguard timer to ensure that the loading spinner goes away even if Firebase is sluggish or blocked
+    let finishedInit = false;
+    const safeguardTimer = setTimeout(() => {
+      if (!finishedInit) {
+        console.warn("[Stilova Startup] Firebase initialization exceeded 1500ms. Safely continuing with local guest cache...");
+        setAuthLoading(false);
+      }
+    }, 1500);
+
+    // 1. Launch offline initial records safely
+    try {
+      bootstrapLocalData();
+    } catch (e) {
+      console.warn("[Stilova Startup] Error during offline bootstrap:", e);
+    }
     
-    // 2. Refresh main catalog
-    refreshStoryCatalog();
+    // 2. Refresh main catalog safely
+    refreshStoryCatalog().catch(e => {
+      console.warn("[Stilova Startup] Error during stories refresh:", e);
+    });
 
     // 3. Monitor Firebase session signature
     const unsub = onAuthStateChanged(auth, async (user) => {
+      finishedInit = true;
+      clearTimeout(safeguardTimer);
       setAuthLoading(true);
       
       // Helper to easily run promises with timeouts to prevent hanging on network/iframe blockages
