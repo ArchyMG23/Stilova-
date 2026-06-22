@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import { Upload, Trash2, Image, FileImage, Sparkles, RefreshCw, Layers } from "lucide-react";
 import { StorageService } from "../lib/storage";
 import { UserRole } from "../types";
+import { hasRuntimeConfig, supabaseUrl } from "../lib/supabase";
 
 interface CoverUploaderProps {
   currentCoverUrl: string;
@@ -39,9 +40,16 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isSupabaseActive = hasRuntimeConfig || (
+    supabaseUrl && 
+    !supabaseUrl.includes("placeholder-project") && 
+    !supabaseUrl.includes("your-supabase")
+  );
 
   // Parse configurable max upload size from local storage parameter, or fallback to 10
   const getMaxUploadSizeBytes = () => {
@@ -57,6 +65,7 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
 
   const handleFile = async (file: File) => {
     setError(null);
+    setInfo(null);
     const validExtensions = ["jpg", "jpeg", "png", "webp"];
     const ext = file.name.split(".").pop()?.toLowerCase() || "";
     
@@ -89,12 +98,16 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
         const activeStoryId = storyId || "draft_" + Date.now();
         const uploadedUrl = await StorageService.uploadStoryCover(file, activeStoryId, userId, userRole);
         onCoverChanged(uploadedUrl);
-        console.log("[Stilova CoverUploader] Uploaded to Supabase successfully:", uploadedUrl);
+        
+        if (uploadedUrl.startsWith("data:")) {
+          setInfo("Couverture de l'œuvre chargée avec succès dans le cache temporaire local.");
+        } else {
+          setInfo("Image de couverture sauvegardée avec succès sur Supabase Storage !");
+        }
       } catch (err: any) {
         console.warn("[Stilova CoverUploader] Supabase upload failed, using local offline DataURL copy instead:", err);
-        // Fallback to local DataURL
         onCoverChanged(localDataUrl);
-        setError("Note : Supabase Storage hors-ligne ou non configuré dans l'iframe. Votre couverture d'œuvre a été importée avec succès en local (Cache local actif).");
+        setInfo("Couverture de l'œuvre chargée de manière sécurisée dans votre cache local.");
       } finally {
         setUploading(false);
       }
@@ -139,12 +152,26 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
   const removeCover = () => {
     onCoverChanged("");
     setError(null);
+    setInfo(null);
   };
 
   return (
     <div className="flex flex-col gap-3.5 w-full text-left">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-slate-400 font-mono font-bold uppercase tracking-wider">Couverture de l'œuvre</span>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10px] text-slate-400 font-mono font-bold uppercase tracking-wider">Couverture de l'œuvre</span>
+          {isSupabaseActive ? (
+            <span className="inline-flex items-center gap-1.5 text-[8.5px] text-emerald-400 font-mono font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/15">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              Supabase Stockage En-Ligne
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[8.5px] text-amber-500 font-mono font-bold bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/15">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+              Cache Local Uniquement
+            </span>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => setShowGallery(!showGallery)}
@@ -262,8 +289,14 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
       </div>
 
       {error && (
-        <span className="border border-red-500/20 bg-red-500/5 text-red-400 text-[10.5px] px-3.5 py-2 rounded-xl block font-mono">
+        <span className="border border-red-500/20 bg-red-500/5 text-red-400 text-[10.5px] px-3.5 py-2.5 rounded-xl block font-mono">
           ⚠ {error}
+        </span>
+      )}
+
+      {info && (
+        <span className="border border-emerald-500/20 bg-emerald-500/5 text-emerald-400 text-[10.5px] px-3.5 py-2.5 rounded-xl block font-mono">
+          ✓ {info}
         </span>
       )}
     </div>

@@ -23,6 +23,14 @@ async function startServer() {
 
   app.use(express.json({ limit: "20mb" }));
 
+  // API endpoint for runtime client-side environment key injection
+  app.get("/api/config/storage", (req, res) => {
+    res.json({
+      VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || "",
+      VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY || ""
+    });
+  });
+
   // ==========================================
   // SERVER SIDE GEMINI API ENDPOINTS
   // ==========================================

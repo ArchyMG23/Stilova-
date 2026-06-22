@@ -27,7 +27,7 @@ import EditorialPanel from "./components/EditorialPanel";
 import CoverUploader from "./components/CoverUploader";
 import RoleDashboards from "./components/RoleDashboards";
 import { motion } from "motion/react";
-import { supabase, supabaseUrl, supabaseAnonKey } from "./lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey, initializeSupabase } from "./lib/supabase";
 
 import { 
   Trophy, BookOpen, PenTool, ShieldAlert, LogOut, User, Sparkles, 
@@ -250,6 +250,19 @@ export default function App() {
 
   // Bootstrap cache system and listen to Auth states
   useEffect(() => {
+    // Fetch active Supabase configurations dynamically at runtime from our container proxy API
+    fetch("/api/config/storage")
+      .then(res => res.json())
+      .then(data => {
+        if (data.VITE_SUPABASE_URL && data.VITE_SUPABASE_ANON_KEY) {
+          const ok = initializeSupabase(data.VITE_SUPABASE_URL, data.VITE_SUPABASE_ANON_KEY);
+          console.log("[Stilova Startup] Hydrated Supabase config from cloud service. Active:", ok);
+        }
+      })
+      .catch(err => {
+        console.warn("[Stilova Startup] Runtime environment config fetch bypassed:", err);
+      });
+
     // A safeguard timer to ensure that the loading spinner goes away even if Firebase is sluggish or blocked
     let finishedInit = false;
     const safeguardTimer = setTimeout(() => {
@@ -749,8 +762,15 @@ export default function App() {
       let testCoversBucketExists = "Vérification...";
       let testAuthUploads = "Non tenté";
       let testPublicUrlStr = "Non générée";
-      const isSupUrlLoaded = !!((import.meta as any).env?.VITE_SUPABASE_URL);
-      const isSupAnonLoaded = !!((import.meta as any).env?.VITE_SUPABASE_ANON_KEY);
+      const isSupUrlLoaded = hasRuntimeConfig || (
+        !!supabaseUrl && 
+        !supabaseUrl.includes("placeholder-project") && 
+        !supabaseUrl.includes("your-supabase")
+      );
+      const isSupAnonLoaded = hasRuntimeConfig || (
+        !!supabaseAnonKey && 
+        !supabaseAnonKey.includes("dummy")
+      );
 
       try {
         if (supabase && typeof supabase.storage.from === "function") {

@@ -35,7 +35,7 @@ service cloud.firestore {
 
     // Role-based gates check, enforcing non-suspension status
     function isNotBannedOrSuspended(uid) {
-      return !getUserData(uid).get('suspended', false) && !getUserData(uid).get('banned', false);
+      return !userExists(uid) || (!getUserData(uid).get('suspended', false) && !getUserData(uid).get('banned', false));
     }
 
     function isSuperAdmin() {
