@@ -570,6 +570,179 @@ export async function seedCloudFirestore() {
 }
 
 // ----------------------------------------------------
+// AUTOMATIC FIRESTORE COLLECTIONS & SYSTEMS BOOTSTRAPPER
+// ----------------------------------------------------
+export async function bootstrapFirestore() {
+  console.log("%c[Stilova Firestore Bootstrap] Initializing real database bootstrapping process...", "color: #e11d48; font-weight: bold;");
+  
+  const report = {
+    firebaseConnected: false,
+    permissionsStatus: "Unknown",
+    collectionsChecked: [] as string[],
+    systemDocumentsCreated: [] as string[],
+    errors: [] as string[],
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    // 1. Verify Connection to Firebase
+    if (!db || !app) {
+      throw new Error("Firebase SDK or Firestore instance of Stilova is uninitialized/missing.");
+    }
+    report.firebaseConnected = true;
+    console.log("[Stilova Bootstrap] ✓ Firebase app & Firestore database instances are live.");
+
+    // 2. Validate Firestore Read & Write Permissions with a diagnostic probe Doc and clean up
+    const testDocRef = doc(db, "settings", "bootstrap_write_probe_" + Date.now());
+    try {
+      await setDoc(testDocRef, {
+        probeStatus: "active",
+        probeTimestamp: new Date().toISOString()
+      });
+      const snap = await getDoc(testDocRef);
+      if (snap.exists() && snap.data()?.probeStatus === "active") {
+        await deleteDoc(testDocRef);
+        report.permissionsStatus = "✓ Lecture & Écriture Validées en Production";
+        console.log("[Stilova Bootstrap] ✓ Read/Write permission probe test passed.");
+      } else {
+        throw new Error("Data mismatch on write-read diagnostic probe loop.");
+      }
+    } catch (permErr: any) {
+      report.permissionsStatus = "✗ Droits Limités / Rejetés par Règles Sécurité";
+      const errorMsg = permErr?.message || String(permErr);
+      report.errors.push(`Permissions check warning: ${errorMsg}`);
+      console.warn("[Stilova Bootstrap] Non-blocking permission rule warning detected, proceeding anyway. Details: ", errorMsg);
+    }
+
+    // 3. Create collections system if they don't contain a target document (Bootstrapping users, stories, chapters, comments, contests, reports, audit_logs, notifications, bookmarks, follows)
+    const collectionsToBootstrap = [
+      "users",
+      "stories",
+      "chapters",
+      "comments",
+      "contests",
+      "reports",
+      "audit_logs",
+      "notifications",
+      "bookmarks",
+      "follows"
+    ];
+
+    for (const colName of collectionsToBootstrap) {
+      try {
+        const genesisDocRef = doc(db, colName, "genesis_system_init");
+        const genesisSnap = await getDoc(genesisDocRef);
+        
+        if (!genesisSnap.exists()) {
+          console.log(`[Stilova Bootstrap] Seeding genesis initialization record to collection: "${colName}"`);
+          await setDoc(genesisDocRef, {
+            systemGenesis: true,
+            id: "genesis_system_init",
+            description: `Auto-generated genesis record to bootstrap the real "${colName}" collection in Firestore.`,
+            createdAt: new Date().toISOString()
+          });
+          report.collectionsChecked.push(`Collection "${colName}" (Créée/Initialisée avec succès)`);
+        } else {
+          report.collectionsChecked.push(`Collection "${colName}" (Déjà Existante & Structurée)`);
+        }
+      } catch (colErr: any) {
+        const errorMsg = colErr?.message || String(colErr);
+        report.errors.push(`Collection "${colName}" initialization warning: ${errorMsg}`);
+        console.warn(`[Stilova Bootstrap] Warning while verifying collection "${colName}":`, errorMsg);
+      }
+    }
+
+    // 4. Create the document settings/platform
+    try {
+      const platformDocRef = doc(db, "settings", "platform");
+      const platformSnap = await getDoc(platformDocRef);
+      if (!platformSnap.exists()) {
+        console.log("[Stilova Bootstrap] Generating default system platform preferences doc...");
+        await setDoc(platformDocRef, {
+          name: "Stilova",
+          initializedAt: new Date().toISOString(),
+          status: "active",
+          version: "1.0.0",
+          systemGenesis: true
+        });
+        report.systemDocumentsCreated.push("settings/platform (Généré)");
+      } else {
+        report.systemDocumentsCreated.push("settings/platform (Déjà Existant)");
+      }
+    } catch (e: any) {
+      report.errors.push(`settings/platform: ${e?.message || String(e)}`);
+    }
+
+    // 5. Create the document statistics/global
+    try {
+      const globalStatsRef = doc(db, "statistics", "global");
+      const statsSnap = await getDoc(globalStatsRef);
+      if (!statsSnap.exists()) {
+        console.log("[Stilova Bootstrap] Generating default global system telemetry doc...");
+        await setDoc(globalStatsRef, {
+          totalUsers: 0,
+          totalStories: 0,
+          totalChapters: 0,
+          totalComments: 0,
+          totalReads: 0,
+          systemGenesis: true,
+          updatedAt: new Date().toISOString()
+        });
+        report.systemDocumentsCreated.push("statistics/global (Généré)");
+      } else {
+        report.systemDocumentsCreated.push("statistics/global (Déjà Existant)");
+      }
+    } catch (e: any) {
+      report.errors.push(`statistics/global: ${e?.message || String(e)}`);
+    }
+
+    // 6. Create the document roles/default
+    try {
+      const defaultRolesRef = doc(db, "roles", "default");
+      const rolesSnap = await getDoc(defaultRolesRef);
+      if (!rolesSnap.exists()) {
+        console.log("[Stilova Bootstrap] Generating default authorization roles profile...");
+        await setDoc(defaultRolesRef, {
+          defaultRole: "READER",
+          guestAccess: true,
+          permissions: ["read"],
+          systemGenesis: true,
+          updatedAt: new Date().toISOString()
+        });
+        report.systemDocumentsCreated.push("roles/default (Généré)");
+      } else {
+        report.systemDocumentsCreated.push("roles/default (Déjà Existant)");
+      }
+    } catch (e: any) {
+      report.errors.push(`roles/default: ${e?.message || String(e)}`);
+    }
+
+  } catch (globalErr: any) {
+    const rawMsg = globalErr?.message || String(globalErr);
+    report.errors.push(`Fatal bootstrap error: ${rawMsg}`);
+    console.error("[Stilova Bootstrap] Fatal script execution fail:", rawMsg);
+  }
+
+  // 7. Render complete audit report inside Developer/Platform Console
+  console.log("%c==================================================================", "color: #10b981; font-weight: bold;");
+  console.log("%c  📡 RAPPORT MATRIEL DE BOOTSTRAP DU COEUR FIRESTORE STILOVA  ", "color: #ffffff; font-weight: bold; background: #10b981; padding: 4px 8px; border-radius: 4px;");
+  console.log("%c==================================================================", "color: #10b981; font-weight: bold;");
+  console.log(`- Horodatage      : ${report.timestamp}`);
+  console.log(`- SDK Firebase    : ${report.firebaseConnected ? "✓ CONNECTÉ (Production réelle)" : "✗ INACTIF"}`);
+  console.log(`- Permissions DB  : ${report.permissionsStatus}`);
+  console.log("- Collections     :", report.collectionsChecked);
+  console.log("- Docs Systèmes  :", report.systemDocumentsCreated);
+  if (report.errors.length > 0) {
+    console.log("%c⚠️ Incidents / Résolutions de secours actifs :", "color: #f59e0b; font-weight: bold;", report.errors);
+  } else {
+    console.log("%c✓ Intégrité Absolue : Toutes les ressources Firestore réelles sont en place.", "color: #10b981; font-weight: bold;");
+  }
+  console.log("%c==================================================================", "color: #10b981; font-weight: bold;");
+
+  return report;
+}
+
+// ----------------------------------------------------
 // GLOBAL DATA ACCESS API (Saves to Cloud & caches Local)
 // ----------------------------------------------------
 

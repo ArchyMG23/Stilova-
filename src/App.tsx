@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import BrandLogo from "./assets/images/stilova_icon_favicon_1781546886601.jpg";
 import { UserProfile, Story, StoryNode, UserRole, AfricanGenre } from "./types";
-import { auth, dbService, bootstrapLocalData, seedCloudFirestore, runInfrastructureHealthCheck } from "./firebase";
+import { auth, dbService, bootstrapLocalData, seedCloudFirestore, runInfrastructureHealthCheck, bootstrapFirestore } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
   TITLE_FONTS, 
@@ -287,6 +287,15 @@ export default function App() {
         console.error("[Stilova Diagnostics Startup] Probe failed entirely:", err);
       });
 
+    // A safeguard timer to ensure that the loading spinner goes away even if Firebase is sluggish or blocked (e.g. in sandboxed iframe)
+    let finishedInit = false;
+    const safeguardTimer = setTimeout(() => {
+      if (!finishedInit) {
+        console.warn("[Stilova Startup] Firebase initialization exceeded 1800ms. Safely continuing with local guest cache...");
+        setAuthLoading(false);
+      }
+    }, 1800);
+
     // 1. Launch offline initial records safely
     try {
       bootstrapLocalData();
@@ -294,26 +303,42 @@ export default function App() {
       console.warn("[Stilova Startup] Error during offline bootstrap:", e);
     }
     
+    // Run dynamic production-grade Firestore system bootstrap
+    bootstrapFirestore().catch(e => {
+      console.warn("[Stilova Startup] Firestore automated bootstrap warning:", e);
+    });
+    
     // 2. Refresh main catalog safely
     refreshStoryCatalog().catch(e => {
       console.warn("[Stilova Startup] Error during stories refresh:", e);
     });
 
+    // Helper to easily run promises with timeouts to prevent hanging on network/iframe blockages
+    const runWithTimeout = async <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+      return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+      ]);
+    };
+
     // 3. Monitor Firebase session signature
     const unsub = onAuthStateChanged(auth, async (user) => {
+      finishedInit = true;
+      clearTimeout(safeguardTimer);
       setAuthLoading(true);
       try {
         if (user) {
-          // Attempt cloud sync if online
+          // Attempt cloud sync if online (1.5 seconds max wait time)
           try {
-            await seedCloudFirestore();
+            await runWithTimeout(seedCloudFirestore(), 1500, undefined);
           } catch (seedError) {
             console.warn("[Stilova Startup] Firestore seeding deferred/offline:", seedError);
           }
 
           let profile = null;
           try {
-            profile = await dbService.getProfile(user.uid);
+            // Retrieve profile with a 2-second timeout (falls back to null or cache internally/externally)
+            profile = await runWithTimeout(dbService.getProfile(user.uid), 2000, null);
             if (profile && user.email) {
               const emailLower = user.email.toLowerCase();
               const OWNER_EMAIL = (
@@ -324,9 +349,9 @@ export default function App() {
               if (emailLower === OWNER_EMAIL || emailLower === "gabrielyombi311@gmail.com") {
                 if (profile.role !== "FOUNDER_OWNER") {
                   profile.role = "FOUNDER_OWNER";
-                  await dbService.saveProfile(profile);
+                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
                   // Audit log for security verification
-                  await dbService.saveAuditLog({
+                  await runWithTimeout(dbService.saveAuditLog({
                     id: "audit_" + Date.now(),
                     action: "FOUNDER_AUTO_ASSIGN",
                     performedBy: user.uid,
@@ -335,29 +360,29 @@ export default function App() {
                     targetUserName: profile.displayName || user.email,
                     details: "FOUNDER_OWNER role auto-claimed on login by email match.",
                     timestamp: new Date().toISOString()
-                  });
+                  }), 1500, undefined);
                 }
               } else if (emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi")) {
                 if (profile.role !== "SUPER_ADMIN" && profile.role !== "FOUNDER_OWNER") {
                   profile.role = "SUPER_ADMIN";
-                  await dbService.saveProfile(profile);
+                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
                 }
               } else if (profile.role === "admin" || (profile.role as string) === "writer" || (profile.role as string) === "reader" || (profile.role as string) === "moderator") {
                 // Auto-upgrade legacy roles to modern uppercase format
                 const upRole = (profile.role as string).toUpperCase();
                 profile.role = upRole === "WRITER" ? "AUTHOR" : upRole as UserRole;
-                await dbService.saveProfile(profile);
+                await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
               }
             }
           } catch (profileError) {
-            console.error("[Stilova Startup] Profile loading from cloud failed:", profileError);
+            console.warn("[Stilova Startup] Profile loading from cloud failed, fallback active:", profileError);
           }
 
           if (!profile) {
-            // Determine if first user registered in system to assign SUPER_ADMIN
+            // Determine if first user registered in system to assign SUPER_ADMIN (1.5 seconds max wait time)
             let isFirstUser = false;
             try {
-              const profilesList = await dbService.listProfiles();
+              const profilesList = await runWithTimeout(dbService.listProfiles(), 1500, []);
               if (profilesList.length === 0) {
                 isFirstUser = true;
               }
@@ -406,7 +431,7 @@ export default function App() {
               banned: false
             };
             try {
-              await dbService.saveProfile(profile);
+              await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
             } catch (saveError) {
               console.error("[Stilova Startup] Cloud profile preservation failed:", saveError);
             }
