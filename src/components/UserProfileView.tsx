@@ -206,14 +206,11 @@ export default function UserProfileView({
           setSelectedAvatarUrl(cloudUrl);
           setStatusMessage({ text: "Superbe ! Votre avatar personnalisé a été synchronisé sur Supabase Storage.", type: "success" });
         } else {
-          // Fallback to offline avatar representation
-          setSelectedAvatarUrl(dataUrl);
-          setStatusMessage({ text: "Avatar sauvegardé localement en cache.", type: "success" });
+          throw new Error("Utilisateur non connecté dans l'instance Firebase.");
         }
       } catch (err: any) {
-        console.warn("Could not save to Supabase bucket, using local cache: ", err);
-        setSelectedAvatarUrl(dataUrl);
-        setStatusMessage({ text: "Avatar appliqué en local ! (Supabase hors ligne/simulation)", type: "success" });
+        console.error("Could not save to Supabase bucket:", err);
+        setStatusMessage({ text: `Erreur de stockage Supabase : ${err?.message || String(err)}`, type: "error" });
       } finally {
         setIsSaving(false);
         setUploadedImageSrc(null);

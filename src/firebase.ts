@@ -26,6 +26,7 @@ import {
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { Story, StoryNode, Competition, Submission, UserProfile, UserRole, AuditLog } from "./types";
+import { supabase } from "./lib/supabase";
 
 // Resolve dynamic config overrides or use default bundle configuration
 const metaEnv = (import.meta as any).env || {};
@@ -87,15 +88,186 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Test Connection on startup
-export async function testConnection() {
+export interface HealthCheckResult {
+  firebaseConnected: boolean;
+  firebaseError: string | null;
+  authConnected: boolean;
+  authError: string | null;
+  firestoreConnected: boolean;
+  firestoreError: string | null;
+  supabaseConnected: boolean;
+  supabaseError: string | null;
+  supabaseTestUploadPassed: boolean;
+  supabaseTestUploadError: string | null;
+  supabaseTestPublicUrl: string | null;
+  buckets: {
+    avatars: boolean;
+    covers: boolean;
+    illustrations: boolean;
+    chapters: boolean;
+  };
+  bucketErrors: Record<string, string | null>;
+  vars: {
+    VITE_SUPABASE_URL: boolean;
+    VITE_SUPABASE_ANON_KEY: boolean;
+    VITE_FIREBASE_PROJECT_ID: boolean;
+    VITE_FIREBASE_API_KEY: boolean;
+    VITE_FIREBASE_AUTH_DOMAIN: boolean;
+    VITE_FIREBASE_APP_ID: boolean;
+  };
+}
+
+// Test Connection on startup with extensive health-checks
+export async function runInfrastructureHealthCheck(): Promise<HealthCheckResult> {
+  const result: HealthCheckResult = {
+    firebaseConnected: false,
+    firebaseError: null,
+    authConnected: false,
+    authError: null,
+    firestoreConnected: false,
+    firestoreError: null,
+    supabaseConnected: false,
+    supabaseError: null,
+    supabaseTestUploadPassed: false,
+    supabaseTestUploadError: null,
+    supabaseTestPublicUrl: null,
+    buckets: {
+      avatars: false,
+      covers: false,
+      illustrations: false,
+      chapters: false,
+    },
+    bucketErrors: {},
+    vars: {
+      VITE_SUPABASE_URL: !!metaEnv.VITE_SUPABASE_URL,
+      VITE_SUPABASE_ANON_KEY: !!metaEnv.VITE_SUPABASE_ANON_KEY,
+      VITE_FIREBASE_PROJECT_ID: !!metaEnv.VITE_FIREBASE_PROJECT_ID,
+      VITE_FIREBASE_API_KEY: !!metaEnv.VITE_FIREBASE_API_KEY,
+      VITE_FIREBASE_AUTH_DOMAIN: !!metaEnv.VITE_FIREBASE_AUTH_DOMAIN,
+      VITE_FIREBASE_APP_ID: !!metaEnv.VITE_FIREBASE_APP_ID,
+    }
+  };
+
+  // 1. Firebase Connected Check
   try {
-    // Attempt standard retrieval of a connection signature
-    await getDocFromServer(doc(db, 'system_meta', 'connection_ping'));
-    console.log("[Stilova System DB] Deep Cloud Sync online.");
-  } catch (error) {
-    console.log("[Stilova System DB] Local Sandbox Buffer active (disconnected or offline).");
+    if (app) {
+      result.firebaseConnected = true;
+    } else {
+      result.firebaseError = "Firebase App instance is missing.";
+    }
+  } catch (err: any) {
+    result.firebaseError = err?.message || String(err);
   }
+
+  // 2. Auth Service Connected Check
+  try {
+    if (auth) {
+      result.authConnected = true;
+    } else {
+      result.authError = "Auth Service is missing.";
+    }
+  } catch (err: any) {
+    result.authError = err?.message || String(err);
+  }
+
+  // 3. Firestore Connection Check
+  try {
+    await getDocFromServer(doc(db, 'system_meta', 'connection_ping'));
+    result.firestoreConnected = true;
+  } catch (err: any) {
+    const rawError = err?.message || String(err);
+    if (
+      rawError.includes("permission-denied") || 
+      rawError.includes("insufficient permissions") || 
+      rawError.includes("Missing or insufficient permissions")
+    ) {
+      result.firestoreConnected = true;
+      result.firestoreError = "Connecté (Règles de sécurité rejetées pour ping anonyme, OK)";
+    } else {
+      result.firestoreError = rawError;
+    }
+  }
+
+  // 4. Supabase Connected Check & specific buckets check
+  const hasSupabaseUrl = metaEnv.VITE_SUPABASE_URL && 
+    !metaEnv.VITE_SUPABASE_URL.includes("placeholder-project") && 
+    !metaEnv.VITE_SUPABASE_URL.includes("your-supabase");
+
+  if (hasSupabaseUrl) {
+    try {
+      const { error } = await supabase.storage.from("covers").list("", { limit: 1 });
+      if (error) {
+        result.supabaseError = error.message;
+        if (!error.message.toLowerCase().includes("not found")) {
+          // Other error type
+        } else {
+          result.supabaseConnected = true; // Connection OK but bucket missing
+        }
+      } else {
+        result.supabaseConnected = true;
+      }
+    } catch (err: any) {
+      result.supabaseError = err?.message || String(err);
+    }
+
+    const checkBucket = async (bucketName: string) => {
+      try {
+        const { error } = await supabase.storage.from(bucketName).list("", { limit: 1 });
+        if (error && (
+          error.message.toLowerCase().includes("not found") || 
+          error.message.toLowerCase().includes("does not exist") || 
+          (error as any).status === 404
+        )) {
+          result.buckets[bucketName as keyof typeof result.buckets] = false;
+          result.bucketErrors[bucketName] = error.message;
+        } else {
+          result.buckets[bucketName as keyof typeof result.buckets] = true;
+        }
+      } catch (err: any) {
+        result.buckets[bucketName as keyof typeof result.buckets] = false;
+        result.bucketErrors[bucketName] = err?.message || String(err);
+      }
+    };
+
+    await Promise.all([
+      checkBucket("avatars"),
+      checkBucket("covers"),
+      checkBucket("illustrations"),
+      checkBucket("chapters")
+    ]);
+
+    // Active diagnostic test: Connexion -> Vérification covers -> Upload ficher test -> Génération URL publique
+    try {
+      const probePayload = "Stilova sovereign infrastructure verification probe run on " + new Date().toISOString();
+      const probeBlob = new Blob([probePayload], { type: "text/plain" });
+      const probeFile = new File([probeBlob], "integrity_probe_test.txt", { type: "text/plain" });
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("covers")
+        .upload("probes/integrity_probe_test.txt", probeFile, {
+          cacheControl: "0",
+          upsert: true
+        });
+
+      if (uploadError) {
+        result.supabaseTestUploadPassed = false;
+        result.supabaseTestUploadError = uploadError.message;
+      } else {
+        result.supabaseTestUploadPassed = true;
+        const { data: pubData } = supabase.storage
+          .from("covers")
+          .getPublicUrl("probes/integrity_probe_test.txt");
+        result.supabaseTestPublicUrl = pubData?.publicUrl || "Aucune URL générée";
+      }
+    } catch (testErr: any) {
+      result.supabaseTestUploadPassed = false;
+      result.supabaseTestUploadError = testErr?.message || String(testErr);
+    }
+  } else {
+    result.supabaseError = "VITE_SUPABASE_URL ou clé anonyme manquante (Placeholder par défaut actif)";
+  }
+
+  return result;
 }
 
 // ----------------------------------------------------
@@ -772,23 +944,10 @@ export const dbService = {
         }
       }
       return true;
-    } catch (e) {
-      // Fallback local vote constraint
-      const votes = getLocal<any[]>("votes", []);
-      const alreadyVoted = votes.some(v => v.userId === userId && v.submissionId === submissionId);
-      if (alreadyVoted) return false;
-
-      votes.push({ userId, submissionId, compId });
-      setLocal("votes", votes);
-
-      // Increment local count
-      const subs = getLocal<Submission[]>("submissions", []);
-      const idx = subs.findIndex(s => s.id === submissionId);
-      if (idx > -1) {
-        subs[idx].votesCount += 1;
-        setLocal("submissions", subs);
-      }
-      return true;
+    } catch (e: any) {
+      console.error("[Vote Execution Failed]", e);
+      handleFirestoreError(e, OperationType.WRITE, votePath);
+      throw e;
     }
   }
 };

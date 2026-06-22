@@ -13,14 +13,22 @@ export class SupabaseStorageProvider implements IStorageProvider {
     );
 
     if (!hasRealSupabase) {
-      console.warn("[Storage] Environment uses default Supabase. Converting to local URL to ensure 100% offline success.");
-      return new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          resolve((reader.result as string) || "");
-        };
-        reader.readAsDataURL(file);
-      });
+      const missingVars: string[] = [];
+      if (!process.env.VITE_SUPABASE_URL && !import.meta.env.VITE_SUPABASE_URL && !hasRuntimeConfig) {
+        missingVars.push("VITE_SUPABASE_URL");
+      }
+      if (!process.env.VITE_SUPABASE_ANON_KEY && !import.meta.env.VITE_SUPABASE_ANON_KEY && !hasRuntimeConfig) {
+        missingVars.push("VITE_SUPABASE_ANON_KEY");
+      }
+      
+      if (missingVars.length > 0) {
+        throw new Error(`[Configuration Manquante] Supabase Storage hors-ligne. Les variables d'environnement suivantes sont absentes : ${missingVars.join(", ")}`);
+      }
+      throw new Error("[Configuration Invalide] Supabase Storage est configuré avec des valeurs fictives ou temporaires.");
+    }
+
+    if (!supabase) {
+      throw new Error("[Initialisation Échouée] Le client Supabase n'est pas instancié.");
     }
 
     try {
@@ -33,14 +41,31 @@ export class SupabaseStorageProvider implements IStorageProvider {
         });
 
       if (error) {
-        console.warn(`[SupabaseStorageProvider] Upload error, falling back to local base64 preview:`, error);
-        return new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            resolve((reader.result as string) || "");
-          };
-          reader.readAsDataURL(file);
-        });
+        const errorMsg = error.message || "";
+        console.error(`[SupabaseStorageProvider] Native Upload Error:`, error);
+        
+        // Rules checking: missing bucket
+        if (
+          errorMsg.toLowerCase().includes("not found") || 
+          errorMsg.toLowerCase().includes("does not exist") || 
+          (error as any).status === 404
+        ) {
+          throw new Error(`[Ressource Manquante] Le bucket de destination de stockage "${options.bucket}" est absent ou dépublié sur Supabase.`);
+        }
+        
+        // Rules checking: policies block
+        if (
+          errorMsg.toLowerCase().includes("policy") || 
+          errorMsg.toLowerCase().includes("row-level security") || 
+          errorMsg.toLowerCase().includes("permission") || 
+          errorMsg.toLowerCase().includes("unauthorized") ||
+          (error as any).status === 401 ||
+          (error as any).status === 403
+        ) {
+          throw new Error(`[Sécurité Refusée] Supabase Policy de sécurité RLS a rejeté l'upload. Erreur native : ${errorMsg}`);
+        }
+
+        throw new Error(`[Supabase Erreur Native] ${errorMsg}`);
       }
 
       const { data: publicData } = supabase.storage
@@ -48,15 +73,9 @@ export class SupabaseStorageProvider implements IStorageProvider {
         .getPublicUrl(options.filePath);
 
       return publicData.publicUrl;
-    } catch (e) {
-      console.warn("[SupabaseStorageProvider] Storage client threw, falling back to local base64 preview:", e);
-      return new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          resolve((reader.result as string) || "");
-        };
-        reader.readAsDataURL(file);
-      });
+    } catch (e: any) {
+      console.error("[SupabaseStorageProvider] Unhandled Storage Client Exception:", e);
+      throw new Error(e?.message || String(e));
     }
   }
 

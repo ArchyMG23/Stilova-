@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Story, Competition, UserProfile, AuditLog, UserRole } from "../types";
-import { dbService, auth } from "../firebase";
+import { dbService, auth, runInfrastructureHealthCheck, HealthCheckResult } from "../firebase";
 import { 
   Sliders, Users, Hammer, Trophy, Key, Server, 
   RefreshCw, CheckCircle, Save, Plus, Ban, Power, UserCheck,
@@ -27,6 +27,28 @@ export default function AdministrationPanel({ stories, onRefreshStories, current
 
   const [activeTab, setActiveTab] = useState<string>(getDefaultTab());
   const [loading, setLoading] = useState(true);
+
+  // Diagnostics states
+  const [healthCheck, setHealthCheck] = useState<HealthCheckResult | null>(null);
+  const [runningHealthCheck, setRunningHealthCheck] = useState(false);
+
+  const triggerDiagnostic = async () => {
+    setRunningHealthCheck(true);
+    try {
+      const res = await runInfrastructureHealthCheck();
+      setHealthCheck(res);
+    } catch (e) {
+      console.error("[Stilova Diagnostics] Run failed:", e);
+    } finally {
+      setRunningHealthCheck(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "diagnostics") {
+      triggerDiagnostic();
+    }
+  }, [activeTab]);
 
   // Core administrative states
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -500,6 +522,19 @@ export default function AdministrationPanel({ stories, onRefreshStories, current
           >
             <Key className="w-4 h-4" />
             <span>Journaux d'Audit</span>
+          </button>
+        )}
+
+        {/* Infrastructure Diagnostic Screen tab button – only for FOUNDER_OWNER and SUPER_ADMIN */}
+        {["FOUNDER_OWNER", "SUPER_ADMIN"].includes(role) && (
+          <button
+            onClick={() => setActiveTab("diagnostics")}
+            className={`px-5 py-3 text-xs font-bold transition border-b-2 flex items-center gap-2 cursor-pointer ${
+              activeTab === "diagnostics" ? "border-amber-500 text-amber-500" : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            <span>Diagnostic Infrastructure</span>
           </button>
         )}
 
@@ -1219,6 +1254,281 @@ export default function AdministrationPanel({ stories, onRefreshStories, current
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ========================================== */}
+        {/* 10. TAB INFRASTRUCTURE DIAGNOSTIC SCREEN   */}
+        {/* ========================================== */}
+        {activeTab === "diagnostics" && ["FOUNDER_OWNER", "SUPER_ADMIN"].includes(role) && (
+          <div className="flex flex-col gap-6 animate-fade-in text-left">
+            <div className="flex justify-between items-center bg-slate-900/40 p-4 rounded-2xl border border-slate-800">
+              <div>
+                <h4 className="text-sm font-extrabold text-[#E0E0E0] uppercase tracking-wider flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-amber-500 animate-pulse" />
+                  Console de Diagnostic d'Infrastructure Stilova (Strict Prod Mode)
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Exécution temps réel des sondes d'intégrité de la plateforme souveraine.
+                </p>
+              </div>
+              <button
+                onClick={triggerDiagnostic}
+                disabled={runningHealthCheck}
+                className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <RefreshCw className={`w-4 h-4 ${runningHealthCheck ? "animate-spin" : ""}`} />
+                <span>Re-lancer le diagnostic</span>
+              </button>
+            </div>
+
+            {runningHealthCheck ? (
+              <div className="flex flex-col gap-4 items-center justify-center p-20 border border-slate-800/50 bg-[#0B0C0E]/50 rounded-2xl">
+                <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
+                <span className="font-sans font-medium text-xs text-slate-400 animate-pulse">Sondage des bases, coffres et politiques de sécurité à chaud...</span>
+              </div>
+            ) : healthCheck ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1. Core Services Connection Statuses */}
+                <div className="flex flex-col gap-4 bg-slate-950/40 p-5 rounded-2xl border border-slate-850">
+                  <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest font-mono">1. Intégrité des Serveurs Principaux</span>
+                  
+                  <div className="flex flex-col gap-2.5 mt-2">
+                    {/* Firebase Status */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-200">APPLICATION FIREBASE</span>
+                        <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-full ${
+                          healthCheck.firebaseConnected 
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/10 border border-rose-500/20 text-rose-400 animate-pulse"
+                        }`}>
+                          {healthCheck.firebaseConnected ? "✓ CONNECTÉ" : "✗ ERREUR"}
+                        </span>
+                      </div>
+                      {healthCheck.firebaseError && (
+                        <div className="bg-rose-950/20 text-[10.5px] font-mono p-2 rounded text-rose-400/90 whitespace-pre-wrap leading-normal border border-rose-500/10">
+                          {healthCheck.firebaseError}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Auth Status */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-200">AUTHENTIFICATION FIREBASE</span>
+                        <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-full ${
+                          healthCheck.authConnected 
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/10 border border-rose-500/20 text-rose-400 animate-pulse"
+                        }`}>
+                          {healthCheck.authConnected ? "✓ CONNECTÉ" : "✗ ERREUR"}
+                        </span>
+                      </div>
+                      {healthCheck.authError && (
+                        <div className="bg-rose-950/20 text-[10.5px] font-mono p-2 rounded text-rose-400/90 whitespace-pre-wrap leading-normal border border-rose-500/10">
+                          {healthCheck.authError}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Firestore Status */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-200">FIRESTORE CLOUD DATABASE</span>
+                        <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-full ${
+                          healthCheck.firestoreConnected 
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/10 border border-rose-500/20 text-rose-400 animate-pulse"
+                        }`}>
+                          {healthCheck.firestoreConnected ? "✓ CONNECTÉ" : "✗ ERREUR"}
+                        </span>
+                      </div>
+                      {healthCheck.firestoreError && (
+                        <div className="bg-[#0D0B11] text-[10.5px] font-mono p-2 rounded text-amber-400 border border-slate-800">
+                          {healthCheck.firestoreError}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Supabase Status */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-200">SUPABASE STORAGE CONTROLLER</span>
+                        <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-full ${
+                          healthCheck.supabaseConnected 
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/10 border border-rose-500/20 text-rose-400 animate-pulse"
+                        }`}>
+                          {healthCheck.supabaseConnected ? "✓ CONNECTÉ" : "✗ ERREUR"}
+                        </span>
+                      </div>
+                      {healthCheck.supabaseError && (
+                        <div className="bg-rose-950/20 text-[10.5px] font-mono p-2 rounded text-rose-400/90 whitespace-pre-wrap leading-normal border border-rose-500/10">
+                          {healthCheck.supabaseError}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Specific Storage Buckets Configuration */}
+                <div className="flex flex-col gap-4 bg-slate-950/40 p-5 rounded-2xl border border-slate-850">
+                  <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest font-mono">2. État d'existence des Coffres (Buckets)</span>
+                  
+                  <div className="flex flex-col gap-2.5 mt-2">
+                    {/* avatars */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">avatars</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets.avatars ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets.avatars ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["avatars"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["avatars"]}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* covers */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">covers</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets.covers ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets.covers ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["covers"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["covers"]}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* illustrations */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">illustrations</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets.illustrations ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets.illustrations ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["illustrations"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["illustrations"]}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* chapters */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">chapters</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets.chapters ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets.chapters ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["chapters"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["chapters"]}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Global Env Variables Scanned */}
+                <div className="flex flex-col gap-4 bg-slate-950/40 p-5 rounded-2xl border border-slate-850 lg:col-span-2">
+                  <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest font-mono">3. Diagnostic des Variables d'Environnement Détectées</span>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 font-mono mt-1">
+                    
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_SUPABASE_URL</span>
+                      <span className={healthCheck.vars.VITE_SUPABASE_URL ? "text-emerald-400 font-bold" : "text-rose-500 font-bold"}>
+                        {healthCheck.vars.VITE_SUPABASE_URL ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_SUPABASE_ANON_KEY</span>
+                      <span className={healthCheck.vars.VITE_SUPABASE_ANON_KEY ? "text-emerald-400 font-bold" : "text-rose-500 font-bold"}>
+                        {healthCheck.vars.VITE_SUPABASE_ANON_KEY ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_FIREBASE_PROJECT_ID</span>
+                      <span className={healthCheck.vars.VITE_FIREBASE_PROJECT_ID ? "text-emerald-400 font-bold" : "text-[#D3C1FF] font-medium"}>
+                        {healthCheck.vars.VITE_FIREBASE_PROJECT_ID ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_FIREBASE_API_KEY</span>
+                      <span className={healthCheck.vars.VITE_FIREBASE_API_KEY ? "text-emerald-400 font-bold" : "text-[#D3C1FF] font-medium"}>
+                        {healthCheck.vars.VITE_FIREBASE_API_KEY ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_FIREBASE_AUTH_DOMAIN</span>
+                      <span className={healthCheck.vars.VITE_FIREBASE_AUTH_DOMAIN ? "text-emerald-400 font-bold" : "text-[#D3C1FF] font-medium"}>
+                        {healthCheck.vars.VITE_FIREBASE_AUTH_DOMAIN ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#0B0C0E]/40 p-3 rounded-xl border border-slate-900 text-[11px]">
+                      <span className="text-slate-400">VITE_FIREBASE_APP_ID</span>
+                      <span className={healthCheck.vars.VITE_FIREBASE_APP_ID ? "text-emerald-400 font-bold" : "text-[#D3C1FF] font-medium"}>
+                        {healthCheck.vars.VITE_FIREBASE_APP_ID ? "✓ DÉTECTÉE" : "✗ ABSENTE"}
+                      </span>
+                    </div>
+
+                  </div>
+                </div>
+
+                {/* 4. Active Test Upload result */}
+                <div className="flex flex-col gap-4 bg-slate-950/40 p-5 rounded-2xl border border-slate-850 lg:col-span-2">
+                  <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest font-mono">4. Résultats d'un Test de Télétransmission Réel (Sondage en Écriture/Lecture Supabase)</span>
+                  
+                  <div className="flex flex-col gap-3 mt-2 font-mono text-xs">
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-3.5 rounded-xl border border-slate-900">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-200 font-semibold">TÉLÉTRANSMISSION ACTIVERÉELLE (Fichier test dans "covers")</span>
+                        <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-full ${
+                          healthCheck.supabaseTestUploadPassed 
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/10 border border-rose-500/20 text-rose-400 animate-pulse"
+                        }`}>
+                          {healthCheck.supabaseTestUploadPassed ? "✓ SUCCÈS" : "✗ ÉCHEC"}
+                        </span>
+                      </div>
+                      
+                      {healthCheck.supabaseTestUploadError && (
+                        <div className="bg-rose-950/20 text-[10.5px] font-mono p-2.5 rounded text-rose-400 mt-2 border border-rose-500/10 whitespace-normal break-all">
+                          <strong>Détail d'échec natif :</strong> {healthCheck.supabaseTestUploadError}
+                        </div>
+                      )}
+                      
+                      {healthCheck.supabaseTestPublicUrl && (
+                        <div className="bg-emerald-950/10 text-[10.5px] font-mono p-2.5 rounded text-emerald-400 mt-2 border border-emerald-500/10 whitespace-normal break-all">
+                          <strong>URL Publique Réelle Générée :</strong> <a href={healthCheck.supabaseTestPublicUrl} target="_blank" rel="noreferrer" className="underline hover:text-emerald-300 font-bold">{healthCheck.supabaseTestPublicUrl}</a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              <div className="text-center p-10 italic text-slate-400 font-sans">
+                Aucune sonde d'infrastructure n'a encore été lancée pour cette session.
+              </div>
+            )}
           </div>
         )}
 

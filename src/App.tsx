@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import BrandLogo from "./assets/images/stilova_icon_favicon_1781546886601.jpg";
 import { UserProfile, Story, StoryNode, UserRole, AfricanGenre } from "./types";
-import { auth, dbService, bootstrapLocalData, seedCloudFirestore } from "./firebase";
+import { auth, dbService, bootstrapLocalData, seedCloudFirestore, runInfrastructureHealthCheck } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
   TITLE_FONTS, 
@@ -27,7 +27,7 @@ import EditorialPanel from "./components/EditorialPanel";
 import CoverUploader from "./components/CoverUploader";
 import RoleDashboards from "./components/RoleDashboards";
 import { motion } from "motion/react";
-import { supabase, supabaseUrl, supabaseAnonKey, initializeSupabase } from "./lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey, initializeSupabase, hasRuntimeConfig } from "./lib/supabase";
 
 import { 
   Trophy, BookOpen, PenTool, ShieldAlert, LogOut, User, Sparkles, 
@@ -263,14 +263,29 @@ export default function App() {
         console.warn("[Stilova Startup] Runtime environment config fetch bypassed:", err);
       });
 
-    // A safeguard timer to ensure that the loading spinner goes away even if Firebase is sluggish or blocked
-    let finishedInit = false;
-    const safeguardTimer = setTimeout(() => {
-      if (!finishedInit) {
-        console.warn("[Stilova Startup] Firebase initialization exceeded 1500ms. Safely continuing with local guest cache...");
-        setAuthLoading(false);
-      }
-    }, 1500);
+    // Start automated backend health probe checks on startup & log to admin logs
+    runInfrastructureHealthCheck()
+      .then(result => {
+        console.log("[Stilova Diagnostics Startup] Completed complete run check:", result);
+        const logId = "startup_check_" + Date.now();
+        const statusSummary = `Firebase: ${result.firebaseConnected ? "OK" : "KO"}, Firestore: ${result.firestoreConnected ? "OK" : "KO"}, Supabase: ${result.supabaseConnected ? "OK" : "KO"}. Buckets: avatars(${result.buckets.avatars ? "OK" : "KO"}), covers(${result.buckets.covers ? "OK" : "KO"}), illustrations(${result.buckets.illustrations ? "OK" : "KO"}), chapters(${result.buckets.chapters ? "OK text" : "KO"}).`;
+        
+        dbService.saveAuditLog({
+          id: logId,
+          action: "STARTUP_HEALTH_CHECK",
+          performedBy: "SYSTEM_DAEMON",
+          performedByName: "Platform Sovereign Daemon",
+          targetUserId: "system/core",
+          targetUserName: "System Infrastructure Probes",
+          details: statusSummary,
+          timestamp: new Date().toISOString()
+        }).catch(err => {
+          console.warn("[Stilova Diagnostics Startup] Could not record system check to Cloud logs:", err);
+        });
+      })
+      .catch(err => {
+        console.error("[Stilova Diagnostics Startup] Probe failed entirely:", err);
+      });
 
     // 1. Launch offline initial records safely
     try {
@@ -286,31 +301,19 @@ export default function App() {
 
     // 3. Monitor Firebase session signature
     const unsub = onAuthStateChanged(auth, async (user) => {
-      finishedInit = true;
-      clearTimeout(safeguardTimer);
       setAuthLoading(true);
-      
-      // Helper to easily run promises with timeouts to prevent hanging on network/iframe blockages
-      const runWithTimeout = async <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
-        return Promise.race([
-          promise,
-          new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
-        ]);
-      };
-
       try {
         if (user) {
-          // Attempt cloud sync if online (1.5 seconds max wait time)
+          // Attempt cloud sync if online
           try {
-            await runWithTimeout(seedCloudFirestore(), 1500, undefined);
+            await seedCloudFirestore();
           } catch (seedError) {
             console.warn("[Stilova Startup] Firestore seeding deferred/offline:", seedError);
           }
 
           let profile = null;
           try {
-            // Retrieve profile with a 2-second timeout (falls back to null or cache internally/externally)
-            profile = await runWithTimeout(dbService.getProfile(user.uid), 2000, null);
+            profile = await dbService.getProfile(user.uid);
             if (profile && user.email) {
               const emailLower = user.email.toLowerCase();
               const OWNER_EMAIL = (
@@ -321,9 +324,9 @@ export default function App() {
               if (emailLower === OWNER_EMAIL || emailLower === "gabrielyombi311@gmail.com") {
                 if (profile.role !== "FOUNDER_OWNER") {
                   profile.role = "FOUNDER_OWNER";
-                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
+                  await dbService.saveProfile(profile);
                   // Audit log for security verification
-                  await runWithTimeout(dbService.saveAuditLog({
+                  await dbService.saveAuditLog({
                     id: "audit_" + Date.now(),
                     action: "FOUNDER_AUTO_ASSIGN",
                     performedBy: user.uid,
@@ -332,29 +335,29 @@ export default function App() {
                     targetUserName: profile.displayName || user.email,
                     details: "FOUNDER_OWNER role auto-claimed on login by email match.",
                     timestamp: new Date().toISOString()
-                  }), 1500, undefined);
+                  });
                 }
               } else if (emailLower === "yombivictor@gmail.com" || emailLower.includes("yombi")) {
                 if (profile.role !== "SUPER_ADMIN" && profile.role !== "FOUNDER_OWNER") {
                   profile.role = "SUPER_ADMIN";
-                  await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
+                  await dbService.saveProfile(profile);
                 }
               } else if (profile.role === "admin" || (profile.role as string) === "writer" || (profile.role as string) === "reader" || (profile.role as string) === "moderator") {
                 // Auto-upgrade legacy roles to modern uppercase format
                 const upRole = (profile.role as string).toUpperCase();
                 profile.role = upRole === "WRITER" ? "AUTHOR" : upRole as UserRole;
-                await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
+                await dbService.saveProfile(profile);
               }
             }
           } catch (profileError) {
-            console.warn("[Stilova Startup] Profile loading from cloud failed, fallback active:", profileError);
+            console.error("[Stilova Startup] Profile loading from cloud failed:", profileError);
           }
 
           if (!profile) {
-            // Determine if first user registered in system to assign SUPER_ADMIN (1.5 seconds max wait time)
+            // Determine if first user registered in system to assign SUPER_ADMIN
             let isFirstUser = false;
             try {
-              const profilesList = await runWithTimeout(dbService.listProfiles(), 1500, []);
+              const profilesList = await dbService.listProfiles();
               if (profilesList.length === 0) {
                 isFirstUser = true;
               }
@@ -403,9 +406,9 @@ export default function App() {
               banned: false
             };
             try {
-              await runWithTimeout(dbService.saveProfile(profile), 1500, undefined);
+              await dbService.saveProfile(profile);
             } catch (saveError) {
-              console.warn("[Stilova Startup] Cloud profile preservation skipped:", saveError);
+              console.error("[Stilova Startup] Cloud profile preservation failed:", saveError);
             }
           }
 

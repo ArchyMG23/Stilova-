@@ -98,16 +98,10 @@ export default function CoverUploader({ currentCoverUrl, onCoverChanged, userId,
         const activeStoryId = storyId || "draft_" + Date.now();
         const uploadedUrl = await StorageService.uploadStoryCover(file, activeStoryId, userId, userRole);
         onCoverChanged(uploadedUrl);
-        
-        if (uploadedUrl.startsWith("data:")) {
-          setInfo("Couverture de l'œuvre chargée avec succès dans le cache temporaire local.");
-        } else {
-          setInfo("Image de couverture sauvegardée avec succès sur Supabase Storage !");
-        }
+        setInfo("Image de couverture sauvegardée avec succès sur Supabase Storage !");
       } catch (err: any) {
-        console.warn("[Stilova CoverUploader] Supabase upload failed, using local offline DataURL copy instead:", err);
-        onCoverChanged(localDataUrl);
-        setInfo("Couverture de l'œuvre chargée de manière sécurisée dans votre cache local.");
+        console.error("[Stilova CoverUploader] Supabase upload failed:", err);
+        setError(`Échec de télétransmission Supabase : ${err?.message || String(err)}`);
       } finally {
         setUploading(false);
       }
