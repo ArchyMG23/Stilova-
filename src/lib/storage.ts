@@ -1,5 +1,5 @@
 import { IStorageProvider, StorageUploadOptions, UserRole } from "../types";
-import { supabase, hasRuntimeConfig, supabaseUrl } from "./supabase";
+import { supabase, hasRuntimeConfig, supabaseUrl, getCleanBucket } from "./supabase";
 
 // ====================================================
 // SUPABASE STORAGE PROVIDER (Active)
@@ -32,8 +32,9 @@ export class SupabaseStorageProvider implements IStorageProvider {
     }
 
     try {
+      const resolvedBucket = getCleanBucket(options.bucket);
       const { data, error } = await supabase.storage
-        .from(options.bucket)
+        .from(resolvedBucket)
         .upload(options.filePath, file, {
           cacheControl: "3600",
           upsert: true,
@@ -50,7 +51,7 @@ export class SupabaseStorageProvider implements IStorageProvider {
           errorMsg.toLowerCase().includes("does not exist") || 
           (error as any).status === 404
         ) {
-          throw new Error(`[Ressource Manquante] Le bucket de destination de stockage "${options.bucket}" est absent ou dépublié sur Supabase.`);
+          throw new Error(`[Ressource Manquante] Le bucket de destination de stockage "${resolvedBucket}" (mappé depuis "${options.bucket}") est absent ou dépublié sur Supabase.`);
         }
         
         // Rules checking: policies block
@@ -69,7 +70,7 @@ export class SupabaseStorageProvider implements IStorageProvider {
       }
 
       const { data: publicData } = supabase.storage
-        .from(options.bucket)
+        .from(resolvedBucket)
         .getPublicUrl(options.filePath);
 
       return publicData.publicUrl;
@@ -80,7 +81,8 @@ export class SupabaseStorageProvider implements IStorageProvider {
   }
 
   async deleteFile(bucket: string, filePath: string): Promise<void> {
-    const { error } = await supabase.storage.from(bucket).remove([filePath]);
+    const resolvedBucket = getCleanBucket(bucket);
+    const { error } = await supabase.storage.from(resolvedBucket).remove([filePath]);
     if (error) {
       console.error(`[SupabaseStorageProvider] Delete error:`, error);
       throw error;
@@ -88,13 +90,15 @@ export class SupabaseStorageProvider implements IStorageProvider {
   }
 
   async getPublicUrl(bucket: string, filePath: string): Promise<string> {
-    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    const resolvedBucket = getCleanBucket(bucket);
+    const { data } = supabase.storage.from(resolvedBucket).getPublicUrl(filePath);
     return data.publicUrl;
   }
 
   async createSignedUrl(bucket: string, filePath: string, expiresInSeconds: number): Promise<string> {
+    const resolvedBucket = getCleanBucket(bucket);
     const { data, error } = await supabase.storage
-      .from(bucket)
+      .from(resolvedBucket)
       .createSignedUrl(filePath, expiresInSeconds);
     if (error) {
       console.error(`[SupabaseStorageProvider] SignedUrl error:`, error);
@@ -104,6 +108,7 @@ export class SupabaseStorageProvider implements IStorageProvider {
   }
 
   async moveTemporaryFile(sourcePath: string, destBucket: string, destPath: string): Promise<string> {
+    const resolvedDestBucket = getCleanBucket(destBucket);
     const { data: downloadBlob, error: downloadError } = await supabase.storage
       .from("temporary")
       .download(sourcePath);
@@ -117,7 +122,7 @@ export class SupabaseStorageProvider implements IStorageProvider {
     }
 
     const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(destBucket)
+      .from(resolvedDestBucket)
       .upload(destPath, downloadBlob, {
         cacheControl: "3600",
         upsert: true,
@@ -131,7 +136,7 @@ export class SupabaseStorageProvider implements IStorageProvider {
     // Erase standard source file inside the temporary bucket
     await supabase.storage.from("temporary").remove([sourcePath]);
 
-    const { data: publicData } = supabase.storage.from(destBucket).getPublicUrl(destPath);
+    const { data: publicData } = supabase.storage.from(resolvedDestBucket).getPublicUrl(destPath);
     return publicData.publicUrl;
   }
 }

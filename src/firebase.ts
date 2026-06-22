@@ -26,7 +26,7 @@ import {
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { Story, StoryNode, Competition, Submission, UserProfile, UserRole, AuditLog } from "./types";
-import { supabase } from "./lib/supabase";
+import { supabase, runSupabaseAudit } from "./lib/supabase";
 
 // Resolve dynamic config overrides or use default bundle configuration
 const metaEnv = (import.meta as any).env || {};
@@ -105,6 +105,8 @@ export interface HealthCheckResult {
     covers: boolean;
     illustrations: boolean;
     chapters: boolean;
+    contests: boolean;
+    "system-assets": boolean;
   };
   bucketErrors: Record<string, string | null>;
   vars: {
@@ -136,6 +138,8 @@ export async function runInfrastructureHealthCheck(): Promise<HealthCheckResult>
       covers: false,
       illustrations: false,
       chapters: false,
+      contests: false,
+      "system-assets": false,
     },
     bucketErrors: {},
     vars: {
@@ -189,82 +193,71 @@ export async function runInfrastructureHealthCheck(): Promise<HealthCheckResult>
   }
 
   // 4. Supabase Connected Check & specific buckets check
-  const hasSupabaseUrl = metaEnv.VITE_SUPABASE_URL && 
-    !metaEnv.VITE_SUPABASE_URL.includes("placeholder-project") && 
-    !metaEnv.VITE_SUPABASE_URL.includes("your-supabase");
-
-  if (hasSupabaseUrl) {
-    try {
-      const { error } = await supabase.storage.from("covers").list("", { limit: 1 });
-      if (error) {
-        result.supabaseError = error.message;
-        if (!error.message.toLowerCase().includes("not found")) {
-          // Other error type
-        } else {
-          result.supabaseConnected = true; // Connection OK but bucket missing
-        }
-      } else {
-        result.supabaseConnected = true;
-      }
-    } catch (err: any) {
-      result.supabaseError = err?.message || String(err);
-    }
-
-    const checkBucket = async (bucketName: string) => {
-      try {
-        const { error } = await supabase.storage.from(bucketName).list("", { limit: 1 });
-        if (error && (
-          error.message.toLowerCase().includes("not found") || 
-          error.message.toLowerCase().includes("does not exist") || 
-          (error as any).status === 404
-        )) {
-          result.buckets[bucketName as keyof typeof result.buckets] = false;
-          result.bucketErrors[bucketName] = error.message;
-        } else {
-          result.buckets[bucketName as keyof typeof result.buckets] = true;
-        }
-      } catch (err: any) {
-        result.buckets[bucketName as keyof typeof result.buckets] = false;
-        result.bucketErrors[bucketName] = err?.message || String(err);
-      }
+  try {
+    const auditReport = await runSupabaseAudit();
+    
+    result.supabaseConnected = auditReport.connectionSuccess;
+    result.supabaseError = auditReport.connectionError;
+    
+    // Copy check statuses for all 6 buckets
+    result.buckets = {
+      avatars: auditReport.bucketsStatus["avatars"],
+      covers: auditReport.bucketsStatus["covers"],
+      illustrations: auditReport.bucketsStatus["illustrations"],
+      chapters: auditReport.bucketsStatus["chapters"],
+      contests: auditReport.bucketsStatus["contests"],
+      "system-assets": auditReport.bucketsStatus["system-assets"]
     };
 
-    await Promise.all([
-      checkBucket("avatars"),
-      checkBucket("covers"),
-      checkBucket("illustrations"),
-      checkBucket("chapters")
-    ]);
+    // If bucket was missing, report remapping status or its warning
+    const expected = ["covers", "avatars", "illustrations", "chapters", "contests", "system-assets"];
+    expected.forEach(b => {
+      if (!auditReport.bucketsStatus[b]) {
+        if (auditReport.remappedBuckets[b]) {
+          result.bucketErrors[b] = `ABSENT (Mappé sur "${auditReport.remappedBuckets[b]}")`;
+        } else {
+          result.bucketErrors[b] = "ABSENT (Aucun fallback possible)";
+        }
+      } else {
+        result.bucketErrors[b] = null;
+      }
+    });
 
     // Active diagnostic test: Connexion -> Vérification covers -> Upload ficher test -> Génération URL publique
-    try {
-      const probePayload = "Stilova sovereign infrastructure verification probe run on " + new Date().toISOString();
-      const probeBlob = new Blob([probePayload], { type: "text/plain" });
-      const probeFile = new File([probeBlob], "integrity_probe_test.txt", { type: "text/plain" });
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from("covers")
-        .upload("probes/integrity_probe_test.txt", probeFile, {
-          cacheControl: "0",
-          upsert: true
-        });
-
-      if (uploadError) {
-        result.supabaseTestUploadPassed = false;
-        result.supabaseTestUploadError = uploadError.message;
-      } else {
-        result.supabaseTestUploadPassed = true;
-        const { data: pubData } = supabase.storage
+    if (auditReport.connectionSuccess) {
+      try {
+        const probePayload = "Stilova sovereign infrastructure verification probe run on " + new Date().toISOString();
+        const probeBlob = new Blob([probePayload], { type: "text/plain" });
+        const probeFile = new File([probeBlob], "integrity_probe_test.txt", { type: "text/plain" });
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
           .from("covers")
-          .getPublicUrl("probes/integrity_probe_test.txt");
-        result.supabaseTestPublicUrl = pubData?.publicUrl || "Aucune URL générée";
+          .upload("probes/integrity_probe_test.txt", probeFile, {
+            cacheControl: "0",
+            upsert: true
+          });
+
+        if (uploadError) {
+          result.supabaseTestUploadPassed = false;
+          result.supabaseTestUploadError = uploadError.message;
+        } else {
+          result.supabaseTestUploadPassed = true;
+          const { data: pubData } = supabase.storage
+            .from("covers")
+            .getPublicUrl("probes/integrity_probe_test.txt");
+          result.supabaseTestPublicUrl = pubData?.publicUrl || "Aucune URL générée";
+        }
+      } catch (testErr: any) {
+        result.supabaseTestUploadPassed = false;
+        result.supabaseTestUploadError = testErr?.message || String(testErr);
       }
-    } catch (testErr: any) {
+    } else {
       result.supabaseTestUploadPassed = false;
-      result.supabaseTestUploadError = testErr?.message || String(testErr);
+      result.supabaseTestUploadError = "Connexion impossible avec Supabase";
     }
-  } else {
-    result.supabaseError = "VITE_SUPABASE_URL ou clé anonyme manquante (Placeholder par défaut actif)";
+  } catch (auditErr: any) {
+    result.supabaseConnected = false;
+    result.supabaseError = auditErr?.message || String(auditErr);
   }
 
   return result;

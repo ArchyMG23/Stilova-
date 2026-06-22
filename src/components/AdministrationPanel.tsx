@@ -1437,6 +1437,37 @@ export default function AdministrationPanel({ stories, onRefreshStories, current
                         </div>
                       )}
                     </div>
+
+                    {/* contests */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">contests</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets.contests ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets.contests ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["contests"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["contests"]}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* system-assets */}
+                    <div className="flex flex-col gap-1.5 bg-[#0B0C0E]/40 p-2.5 rounded-xl border border-slate-900 text-xs">
+                      <div className="flex justify-between items-center font-mono">
+                        <span className="text-slate-350">BUCKET : <strong className="text-indigo-400">system-assets</strong></span>
+                        <span className={`font-bold uppercase ${healthCheck.buckets["system-assets"] ? "text-emerald-400" : "text-rose-500 animate-pulse"}`}>
+                          {healthCheck.buckets["system-assets"] ? "✓ TROUVÉ" : "✗ ABSENT"}
+                        </span>
+                      </div>
+                      {healthCheck.bucketErrors["system-assets"] && (
+                        <div className="text-[9.5px] font-mono text-rose-400/80 mt-0.5 whitespace-pre">
+                          Erreur native : {healthCheck.bucketErrors["system-assets"]}
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 </div>
 

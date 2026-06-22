@@ -767,7 +767,7 @@ export default function App() {
       } else if (stepNum === 2) {
         affectedFile = "src/components/CoverUploader.tsx";
         affectedLine = "Lignes 75-88 (CoverUploader)";
-        correctionApplied = "La télétransmission vers le bucket covers est protégée ou hors ligne. L'application a automatiquement basculé sur un cache hors-ligne via un DataURL local.";
+        correctionApplied = "Échec de télétransmission vers Supabase. Veuillez vérifier vos clés Supabase, RLS policies et l'existence du bucket.";
       } else if (stepNum === 6) {
         affectedFile = "src/firebase.ts";
         affectedLine = "Ligne 465 (getProfile)";
