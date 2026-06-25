@@ -168,13 +168,18 @@ export class S3StorageProvider implements IStorageProvider {
 const activeProvider: IStorageProvider = new SupabaseStorageProvider();
 
 export const StorageService = {
-  validateUpload(file: File, category: "avatar" | "cover" | "illustration" | "document"): void {
+  validateUpload(file: File, category: "avatar" | "cover" | "illustration" | "document" | "audio"): void {
     const validImageExtensions = ["jpg", "jpeg", "png", "webp"];
+    const validAudioExtensions = ["mp3", "m4a", "wav"];
     const fileExt = file.name.split(".").pop()?.toLowerCase() || "";
     
     if (category === "document") {
       if (fileExt !== "pdf") {
         throw new Error("Format de fichier non valide : les documents de chapitre doivent être au format PDF.");
+      }
+    } else if (category === "audio") {
+      if (!validAudioExtensions.includes(fileExt)) {
+        throw new Error("Format audio non valide : veuillez choisir un format MP3, M4A ou WAV.");
       }
     } else {
       if (!validImageExtensions.includes(fileExt)) {
@@ -188,10 +193,32 @@ export const StorageService = {
     if (category === "avatar") maxSizeMB = 5;
     if (category === "cover") maxSizeMB = 10;
     if (category === "illustration") maxSizeMB = 20;
+    if (category === "audio") maxSizeMB = 50;
 
     if (fileSizeMB > maxSizeMB) {
       throw new Error(`Le fichier est trop volumineux. La taille maximale autorisée pour un ${category} est de ${maxSizeMB} Mo (Actuel : ${fileSizeMB.toFixed(2)} Mo).`);
     }
+  },
+
+  async uploadChapterAudio(file: File, storyId: string, nodeId: string, userId: string, userRole: UserRole): Promise<string> {
+    if (
+      userRole !== "AUTHOR" && 
+      userRole !== "ADMIN" && 
+      userRole !== "SUPER_ADMIN" && 
+      userRole !== "FOUNDER_OWNER"
+    ) {
+      throw new Error("NON AUTORISÉ : Seuls les auteurs peuvent importer de l'audio de chapitre.");
+    }
+    this.validateUpload(file, "audio");
+    const ext = file.name.split(".").pop() || "mp3";
+    const filePath = `story_${storyId}/node_${nodeId}/audio_${Date.now()}.${ext}`;
+
+    return activeProvider.uploadFile(file, {
+      bucket: "chapters",
+      filePath,
+      userId,
+      userRole,
+    });
   },
 
   async uploadAvatar(file: File, userId: string, userRole: UserRole): Promise<string> {

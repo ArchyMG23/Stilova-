@@ -1,6 +1,6 @@
 export type UserRole = "VISITOR" | "READER" | "AUTHOR" | "EDITOR" | "MODERATOR" | "ADMIN" | "SUPER_ADMIN" | "FOUNDER_OWNER";
 
-export type AfricanGenre = "afrofuturism" | "mythology" | "romance" | "drama" | "historical";
+export type AfricanGenre = string;
 
 export interface StorageUploadOptions {
   bucket: "avatars" | "covers" | "illustrations" | "chapters" | "contests" | "temporary";
@@ -91,6 +91,20 @@ export interface StoryNode {
   custom_signature_font?: string;
   custom_signature_color?: string;
   custom_signature_alignment?: string;
+  audio_url?: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string; // recipient
+  senderId: string;
+  senderName: string;
+  type: "new_chapter" | "new_story" | "like" | "follow";
+  storyId?: string;
+  storyTitle?: string;
+  message: string;
+  read: boolean;
+  createdAt: string;
 }
 
 export interface Competition {

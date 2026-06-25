@@ -466,6 +466,30 @@ export default function ReaderView({ storyId, onBack, userId, isVisitor, onRegis
               )}
             </div>
 
+            {/* Native HTML5 Audio Player if chapter has an audio_url track */}
+            {currentNode.audio_url && (
+              <div className="mt-8 p-4 bg-slate-950/60 border border-slate-800 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in">
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <div className="w-9 h-9 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 animate-pulse">
+                    <Music className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs text-amber-500 font-mono font-bold uppercase tracking-wider">Piste Audio de l'Auteur</span>
+                    <span className="text-[10px] text-slate-400 font-sans">Bande-son ou narration pré-enregistrée rattachée à ce chapitre.</span>
+                  </div>
+                </div>
+                <div className="w-full sm:w-auto shrink-0 flex items-center">
+                  <audio 
+                    src={currentNode.audio_url} 
+                    controls 
+                    autoPlay={true}
+                    loop={true}
+                    className="w-full sm:w-64 h-8 opacity-90 accent-amber-500" 
+                  />
+                </div>
+              </div>
+            )}
+
             {/* LEAF / BRANCH SELECTION BLOCK */}
             <div className="border-t border-slate-900 mt-10 pt-6 flex flex-col gap-3">
               {showGuestLock ? (

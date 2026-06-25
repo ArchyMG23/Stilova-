@@ -25,7 +25,7 @@ import {
   addDoc
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
-import { Story, StoryNode, Competition, Submission, UserProfile, UserRole, AuditLog } from "./types";
+import { Story, StoryNode, Competition, Submission, UserProfile, UserRole, AuditLog, Notification } from "./types";
 import { supabase, runSupabaseAudit } from "./lib/supabase";
 
 // Resolve dynamic config overrides or use default bundle configuration
@@ -743,7 +743,7 @@ export const dbService = {
   },
 
   // --- STORIES ---
-  async listStories(genre?: string, forceRefresh = false): Promise<Story[]> {
+  async listStories(genre?: string, forceRefresh = true): Promise<Story[]> {
     if (!forceRefresh && memoryCache.stories) {
       const list = memoryCache.stories;
       return genre ? list.filter(s => s.genre === genre) : list;
@@ -794,7 +794,7 @@ export const dbService = {
   },
 
   // --- STORY NODES (Branches) ---
-  async listStoryNodes(storyId: string, forceRefresh = false): Promise<StoryNode[]> {
+  async listStoryNodes(storyId: string, forceRefresh = true): Promise<StoryNode[]> {
     if (!forceRefresh && memoryCache.nodes[storyId]) {
       return memoryCache.nodes[storyId];
     }
@@ -970,5 +970,159 @@ export const dbService = {
       console.error("[Vote Execution Failed]", e);
       return false;
     }
+  },
+
+  // --- NOTIFICATIONS ---
+  async listNotifications(userId: string): Promise<Notification[]> {
+    const list = await safeSupabaseQuery<Notification[]>(
+      supabase.from("notifications").select("*").eq("userId", userId),
+      "notifications_" + userId,
+      []
+    );
+    list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return list;
+  },
+
+  async saveNotification(notification: Notification): Promise<void> {
+    await safeSupabaseUpsert<Notification>("notifications", notification, "notifications_" + notification.userId, "id");
+  },
+
+  async markNotificationAsRead(id: string, userId: string): Promise<void> {
+    const list = getLocal<Notification[]>("notifications_" + userId, []);
+    const idx = list.findIndex(n => n.id === id);
+    if (idx > -1) {
+      list[idx].read = true;
+      setLocal("notifications_" + userId, list);
+      try {
+        await supabase.from("notifications").update({ read: true }).eq("id", id);
+      } catch (e) {
+        console.warn("[Notifications] Error updating read status in Supabase:", e);
+      }
+    }
+  },
+
+  // --- SOCIAL (FOLLOWERS & LIKES) ---
+  async getFollowers(authorId: string): Promise<string[]> {
+    const list = await safeSupabaseQuery<{ followerId: string; followingId: string }[]>(
+      supabase.from("follows").select("*").eq("followingId", authorId),
+      "followers_" + authorId,
+      []
+    );
+    return list.map(f => f.followerId);
+  },
+
+  async toggleFollow(followerId: string, followingId: string): Promise<boolean> {
+    const key = `followers_${followingId}`;
+    const list = getLocal<{ followerId: string; followingId: string }[]>(key, []);
+    const idx = list.findIndex(f => f.followerId === followerId && f.followingId === followingId);
+    let isFollowingNow = false;
+    if (idx > -1) {
+      list.splice(idx, 1);
+      setLocal(key, list);
+      try {
+        await supabase.from("follows").delete().eq("followerId", followerId).eq("followingId", followingId);
+      } catch (e) {
+        console.warn("[Social] Error deleting follow in Supabase:", e);
+      }
+    } else {
+      const entry = { followerId, followingId };
+      list.push(entry);
+      setLocal(key, list);
+      try {
+        await supabase.from("follows").upsert(entry);
+      } catch (e) {
+        console.warn("[Social] Error inserting follow in Supabase:", e);
+      }
+      isFollowingNow = true;
+      
+      try {
+        const profile = await this.getProfile(followerId);
+        const senderName = profile?.displayName || "Un lecteur";
+        const notif: Notification = {
+          id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          userId: followingId,
+          senderId: followerId,
+          senderName,
+          type: "follow",
+          message: `${senderName} s'est abonné à votre plume Stilova !`,
+          read: false,
+          createdAt: new Date().toISOString()
+        };
+        await this.saveNotification(notif);
+      } catch (err) {
+        console.warn("Follow notification deferred", err);
+      }
+    }
+    return isFollowingNow;
+  },
+
+  async isFollowing(followerId: string, followingId: string): Promise<boolean> {
+    const key = `followers_${followingId}`;
+    const list = getLocal<{ followerId: string; followingId: string }[]>(key, []);
+    return list.some(f => f.followerId === followerId && f.followingId === followingId);
+  },
+
+  async getStoryLikes(storyId: string): Promise<string[]> {
+    const list = await safeSupabaseQuery<{ storyId: string; userId: string }[]>(
+      supabase.from("story_likes").select("*").eq("storyId", storyId),
+      "story_likes_" + storyId,
+      []
+    );
+    return list.map(l => l.userId);
+  },
+
+  async toggleLikeStory(storyId: string, userId: string, storyTitle: string, authorId: string): Promise<boolean> {
+    const key = `story_likes_${storyId}`;
+    const list = getLocal<{ storyId: string; userId: string }[]>(key, []);
+    const idx = list.findIndex(l => l.storyId === storyId && l.userId === userId);
+    let isLikedNow = false;
+    if (idx > -1) {
+      list.splice(idx, 1);
+      setLocal(key, list);
+      try {
+        await supabase.from("story_likes").delete().eq("storyId", storyId).eq("userId", userId);
+      } catch (e) {
+        console.warn("[Social] Error deleting like in Supabase:", e);
+      }
+    } else {
+      const entry = { storyId, userId };
+      list.push(entry);
+      setLocal(key, list);
+      try {
+        await supabase.from("story_likes").upsert(entry);
+      } catch (e) {
+        console.warn("[Social] Error inserting like in Supabase:", e);
+      }
+      isLikedNow = true;
+
+      if (userId !== authorId) {
+        try {
+          const profile = await this.getProfile(userId);
+          const senderName = profile?.displayName || "Un lecteur";
+          const notif: Notification = {
+            id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            userId: authorId,
+            senderId: userId,
+            senderName,
+            type: "like",
+            storyId,
+            storyTitle,
+            message: `${senderName} a aimé votre œuvre "${storyTitle}" !`,
+            read: false,
+            createdAt: new Date().toISOString()
+          };
+          await this.saveNotification(notif);
+        } catch (err) {
+          console.warn("Like notification deferred", err);
+        }
+      }
+    }
+    return isLikedNow;
+  },
+
+  async isStoryLiked(storyId: string, userId: string): Promise<boolean> {
+    const key = `story_likes_${storyId}`;
+    const list = getLocal<{ storyId: string; userId: string }[]>(key, []);
+    return list.some(l => l.storyId === storyId && l.userId === userId);
   }
 };

@@ -1,9 +1,10 @@
 import React from "react";
 import { Story } from "../types";
 import { getFontCssValue } from "../lib/typography";
+import { dbService } from "../firebase";
 import { 
   BookOpen, Star, Eye, Calendar, Sparkles, User, ArrowLeft, 
-  Play, Bookmark, MessageSquare, Award, Clock, Share2, CornerDownRight 
+  Play, Bookmark, MessageSquare, Award, Clock, Share2, CornerDownRight, Heart
 } from "lucide-react";
 
 interface StoryDetailViewProps {
@@ -13,6 +14,7 @@ interface StoryDetailViewProps {
   onStartReading: () => void;
   isVisitor: boolean;
   onActionLockTrigger: () => void;
+  currentUser: any;
 }
 
 export default function StoryDetailView({ 
@@ -21,9 +23,46 @@ export default function StoryDetailView({
   onBack, 
   onStartReading, 
   isVisitor, 
-  onActionLockTrigger 
+  onActionLockTrigger,
+  currentUser
 }: StoryDetailViewProps) {
   
+  const [isFollowing, setIsFollowing] = React.useState(false);
+  const [isLiked, setIsLiked] = React.useState(false);
+  const [likesCount, setLikesCount] = React.useState(0);
+  const [followersCount, setFollowersCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!isVisitor && currentUser) {
+      dbService.isFollowing(currentUser.uid, story.authorId).then(setIsFollowing);
+      dbService.isStoryLiked(story.id, currentUser.uid).then(setIsLiked);
+    }
+    dbService.getFollowers(story.authorId).then(list => setFollowersCount(list.length));
+    dbService.getStoryLikes(story.id).then(list => setLikesCount(list.length));
+  }, [story.id, story.authorId, currentUser, isVisitor]);
+
+  const handleFollowToggle = async () => {
+    if (isVisitor) {
+      onActionLockTrigger();
+      return;
+    }
+    if (!currentUser) return;
+    const nowFollowing = await dbService.toggleFollow(currentUser.uid, story.authorId);
+    setIsFollowing(nowFollowing);
+    setFollowersCount(prev => nowFollowing ? prev + 1 : prev - 1);
+  };
+
+  const handleLikeToggle = async () => {
+    if (isVisitor) {
+      onActionLockTrigger();
+      return;
+    }
+    if (!currentUser) return;
+    const nowLiked = await dbService.toggleLikeStory(story.id, currentUser.uid, story.title, story.authorId);
+    setIsLiked(nowLiked);
+    setLikesCount(prev => nowLiked ? prev + 1 : prev - 1);
+  };
+
   const handleBookmarkToggle = () => {
     if (isVisitor) {
       onActionLockTrigger();
@@ -84,17 +123,28 @@ export default function StoryDetailView({
             </div>
 
             {/* Side Action Buttons */}
-            <div className="grid grid-cols-2 gap-2 mt-2">
+            <div className="grid grid-cols-3 gap-1.5 mt-2">
               <button
                 onClick={handleBookmarkToggle}
-                className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl border border-slate-800 bg-slate-950/40 text-[11px] font-sans font-bold text-slate-200 hover:text-amber-500 hover:border-amber-500/30 transition cursor-pointer"
+                className="flex flex-col items-center justify-center gap-1 py-2.5 px-2 rounded-xl border border-slate-800 bg-slate-950/40 text-[10px] font-sans font-bold text-slate-200 hover:text-amber-500 hover:border-amber-500/30 transition cursor-pointer"
               >
                 <Bookmark className="w-3.5 h-3.5" />
                 <span>Ajouter</span>
               </button>
               <button
+                onClick={handleLikeToggle}
+                className={`flex flex-col items-center justify-center gap-1 py-2.5 px-2 rounded-xl border text-[10px] font-sans font-bold cursor-pointer transition ${
+                  isLiked
+                    ? "bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20"
+                    : "bg-slate-950/40 border-slate-800 text-slate-200 hover:text-rose-400 hover:border-rose-500/25"
+                }`}
+              >
+                <Heart className={`w-3.5 h-3.5 ${isLiked ? "fill-rose-400 text-rose-400" : "text-slate-405"}`} />
+                <span>{isLiked ? "Aimé" : "Aimer"}</span>
+              </button>
+              <button
                 onClick={handleShare}
-                className="flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl border border-slate-800 bg-slate-950/40 text-[11px] font-sans font-bold text-slate-200 hover:text-white transition cursor-pointer"
+                className="flex flex-col items-center justify-center gap-1 py-2.5 px-2 rounded-xl border border-slate-800 bg-slate-950/40 text-[10px] font-sans font-bold text-slate-200 hover:text-white transition cursor-pointer"
               >
                 <Share2 className="w-3.5 h-3.5" />
                 <span>Partager</span>
@@ -129,44 +179,60 @@ export default function StoryDetailView({
                   {story.title}
                 </h2>
 
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[9px] font-bold text-amber-550">
-                    G
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-2 bg-slate-950/20 p-3.5 rounded-2xl border border-slate-850/40">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-slate-850 border border-slate-750 flex items-center justify-center text-[10px] font-bold text-amber-500 font-mono">
+                      {story.authorName.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-xs text-slate-300 font-sans font-medium">
+                      Par <strong className="font-serif italic text-white">{story.authorName}</strong>
+                    </span>
                   </div>
-                  <span className="text-xs text-slate-300 font-sans font-medium">
-                    Par <strong className="font-serif italic color-white">{story.authorName}</strong>
-                  </span>
+                  
+                  {!isVisitor && currentUser && currentUser.uid !== story.authorId && (
+                    <button
+                      onClick={handleFollowToggle}
+                      className={`px-3 py-1.5 rounded-xl border text-[11px] font-sans font-bold cursor-pointer transition flex items-center gap-1.5 ${
+                        isFollowing 
+                          ? "bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-900" 
+                          : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/25"
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>{isFollowing ? "Abonné ✓" : "S'abonner"}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Stats badges ribbon */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/40 p-4 border border-slate-850 rounded-2xl text-xs font-sans">
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-slate-500 font-medium">Lectures</span>
-                  <span className="text-slate-205 font-bold flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500 font-medium font-sans">Lectures</span>
+                  <span className="text-slate-200 font-bold flex items-center gap-1 font-sans">
                     <Eye className="w-3.5 h-3.5 text-slate-400" />
                     {story.viewsCount}
                   </span>
                 </div>
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-slate-500 font-medium font-sans">Notation</span>
-                  <span className="text-slate-200 font-bold flex items-center gap-1">
-                    <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                    {story.rating} / 5
+                  <span className="text-[10px] text-slate-500 font-medium font-sans">Abonnés Plume</span>
+                  <span className="text-slate-200 font-bold flex items-center gap-1 font-sans">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    {followersCount}
                   </span>
                 </div>
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-slate-500 font-medium">Chapitres</span>
-                  <span className="text-slate-200 font-bold flex items-center gap-1">
+                  <span className="text-[10px] text-slate-500 font-medium font-sans">Favoris / Likes</span>
+                  <span className="text-slate-200 font-bold flex items-center gap-1 font-sans">
+                    <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500/10" />
+                    {likesCount}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-slate-500 font-medium font-sans">Chapitres</span>
+                  <span className="text-slate-200 font-bold flex items-center gap-1 font-sans">
                     <BookOpen className="w-3.5 h-3.5 text-sky-400" />
                     {chapterCount} scène{chapterCount > 1 ? "s" : ""}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-slate-500 font-medium">Immersif</span>
-                  <span className="text-slate-300 font-bold flex items-center gap-1 font-mono text-[10px] text-amber-500">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                    Synth-audio IA
                   </span>
                 </div>
               </div>

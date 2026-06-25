@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import BrandLogo from "./assets/images/stilova_icon_favicon_1781546886601.jpg";
-import { UserProfile, Story, StoryNode, UserRole, AfricanGenre } from "./types";
+import { UserProfile, Story, StoryNode, UserRole, AfricanGenre, Notification } from "./types";
 import { auth, dbService, bootstrapLocalData, seedCloudFirestore, runInfrastructureHealthCheck, bootstrapFirestore } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
@@ -28,12 +28,13 @@ import CoverUploader from "./components/CoverUploader";
 import RoleDashboards from "./components/RoleDashboards";
 import { motion } from "motion/react";
 import { supabase, supabaseUrl, supabaseAnonKey, initializeSupabase, hasRuntimeConfig } from "./lib/supabase";
+import { StorageService } from "./lib/storage";
 
 import { 
   Trophy, BookOpen, PenTool, ShieldAlert, LogOut, User, Sparkles, 
   RefreshCw, Plus, Edit2, Play, Check, AlertCircle, Heart, Trash2, 
   HelpCircle, Star, Eye, EyeOff, Compass, Flame, ShieldCheck, ArrowRight, CornerDownRight, Zap,
-  Sliders, Type, Palette, Home, Shield, Activity, Settings, Key, FolderHeart, BarChart3, Lock, BookMarked
+  Sliders, Type, Palette, Home, Shield, Activity, Settings, Key, FolderHeart, BarChart3, Lock, BookMarked, Bell, Upload
 } from "lucide-react";
 
 // AVATAR PRESETS list for immersive onboarding 
@@ -180,6 +181,9 @@ export default function App() {
   // Writer Workspace (Atelier) States
   const [myStories, setMyStories] = useState<Story[]>([]);
   const [writingStory, setWritingStory] = useState<Story | null>(null);
+  const [editStoryTitle, setEditStoryTitle] = useState("");
+  const [editStoryCover, setEditStoryCover] = useState("");
+  const [editStoryGenre, setEditStoryGenre] = useState("");
   const [activeNodes, setActiveNodes] = useState<StoryNode[]>([]);
   const [editingNode, setEditingNode] = useState<StoryNode | null>(null);
 
@@ -187,7 +191,7 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
-  const [newGenre, setNewGenre] = useState<AfricanGenre>("afrofuturism");
+  const [newGenre, setNewGenre] = useState<AfricanGenre>("Roman");
   const [newCover, setNewCover] = useState("");
   const [newIsInteractive, setNewIsInteractive] = useState(true);
   const [isCreatingBook, setIsCreatingBook] = useState(false);
@@ -226,6 +230,10 @@ export default function App() {
   const [nodeChoiceText, setNodeChoiceText] = useState("");
   const [nodeChoiceDestination, setNodeChoiceDestination] = useState("");
 
+  const [newNodeAudioUrl, setNewNodeAudioUrl] = useState("");
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
+
   const [savingNode, setSavingNode] = useState(false);
 
   // Typography Customization Board States
@@ -247,6 +255,39 @@ export default function App() {
   const [chapterSignatureColor, setChapterSignatureColor] = useState("amber-500");
   const [chapterSignatureAlign, setChapterSignatureAlign] = useState("right");
   const [hasPreviewedTypo, setHasPreviewedTypo] = useState(false);
+
+  // Notifications System States
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+
+  useEffect(() => {
+    if (currentUser) {
+      const fetchNotifs = async () => {
+        try {
+          const list = await dbService.listNotifications(currentUser.uid);
+          setNotifications(list);
+        } catch (e) {
+          console.warn("Error fetching notifications:", e);
+        }
+      };
+      fetchNotifs();
+      const interval = setInterval(fetchNotifs, 20000); // refresh every 20 seconds
+      return () => clearInterval(interval);
+    } else {
+      setNotifications([]);
+    }
+  }, [currentUser]);
+
+  const handleMarkNotifRead = async (notif: Notification) => {
+    if (currentUser) {
+      await dbService.markNotificationAsRead(notif.id, currentUser.uid);
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+      if (notif.storyId) {
+        setIsNotifOpen(false);
+        handleOpenStoryReader(notif.storyId);
+      }
+    }
+  };
 
   // Bootstrap cache system and listen to Auth states
   useEffect(() => {
@@ -854,6 +895,9 @@ export default function App() {
   const handleFocusStoryAtelier = async (story: Story) => {
     try {
       setWritingStory(story);
+      setEditStoryTitle(story.title);
+      setEditStoryCover(story.coverUrl);
+      setEditStoryGenre(story.genre);
       setEditorSubTab("content");
       
       // Init Story typography states
@@ -921,6 +965,8 @@ export default function App() {
     setNewNodeTitle(freshNode.title);
     setNewNodeContent(freshNode.content);
     setIsRootNode(freshNode.isRoot);
+    setNewNodeAudioUrl("");
+    setAudioUploadError(null);
     
     setChapterSignatureText("");
     setChapterSignatureEnabled(false);
@@ -934,6 +980,8 @@ export default function App() {
     setNewNodeTitle(node.title);
     setNewNodeContent(node.content);
     setIsRootNode(node.isRoot);
+    setNewNodeAudioUrl(node.audio_url || "");
+    setAudioUploadError(null);
     
     // Init Node signature states
     setChapterSignatureText(node.custom_signature || "");
@@ -948,12 +996,15 @@ export default function App() {
     if (!writingStory || !editingNode) return;
     setSavingNode(true);
 
+    const isNewChapter = !activeNodes.some(n => n.id === editingNode.id);
+
     try {
       const updatedNode: StoryNode = {
         ...editingNode,
         title: newNodeTitle,
         content: newNodeContent,
         isRoot: isRootNode,
+        audio_url: newNodeAudioUrl,
         custom_signature: chapterSignatureEnabled ? chapterSignatureText : "",
         custom_signature_font: chapterSignatureEnabled ? chapterSignatureFont : "",
         custom_signature_color: chapterSignatureEnabled ? chapterSignatureColor : "",
@@ -967,6 +1018,33 @@ export default function App() {
       setActiveNodes(prev => prev.map(n => n.id === updatedNode.id ? updatedNode : n));
       setEditingNode(updatedNode);
       alert("Votre chapitre Stylus a été sauvegardé avec succès.");
+
+      if (isNewChapter && writingStory.isPublished) {
+        try {
+          const followers = await dbService.getFollowers(writingStory.authorId);
+          const likers = await dbService.getStoryLikes(writingStory.id);
+          const targetUsers = Array.from(new Set([...followers, ...likers]));
+          
+          for (const recipientId of targetUsers) {
+            if (currentUser && recipientId === currentUser.uid) continue;
+            const notif: Notification = {
+              id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              userId: recipientId,
+              senderId: writingStory.authorId,
+              senderName: writingStory.authorName,
+              type: "new_chapter",
+              storyId: writingStory.id,
+              storyTitle: writingStory.title,
+              message: `Un nouveau chapitre "${newNodeTitle}" a été publié dans "${writingStory.title}" par ${writingStory.authorName} !`,
+              read: false,
+              createdAt: new Date().toISOString()
+            };
+            await dbService.saveNotification(notif);
+          }
+        } catch (err) {
+          console.warn("[Social Notification] Error distributing new chapter notification:", err);
+        }
+      }
     } catch (e) {
       console.error(e);
       alert("Erreur de sauvegarde de l'embranchement.");
@@ -975,12 +1053,46 @@ export default function App() {
     }
   };
 
+  const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!writingStory || !editingNode || !currentUser) return;
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setUploadingAudio(true);
+      setAudioUploadError(null);
+      try {
+        const publicUrl = await StorageService.uploadChapterAudio(
+          file, 
+          writingStory.id, 
+          editingNode.id, 
+          currentUser.uid, 
+          currentUser.role
+        );
+        setNewNodeAudioUrl(publicUrl);
+        alert("Fichier audio téléversé et rattaché avec succès !");
+      } catch (err: any) {
+        console.error("Audio upload failed:", err);
+        setAudioUploadError(err?.message || String(err));
+        alert(`Échec de l'import audio : ${err?.message || String(err)}`);
+      } finally {
+        setUploadingAudio(false);
+      }
+    }
+  };
+
+  const handleAudioRemove = () => {
+    setNewNodeAudioUrl("");
+    setAudioUploadError(null);
+  };
+
   const handleSaveStoryTypography = async () => {
     if (!writingStory) return;
     setSavingNode(true);
     try {
       const updatedStory: Story = {
         ...writingStory,
+        title: editStoryTitle.trim() || writingStory.title,
+        coverUrl: editStoryCover || writingStory.coverUrl,
+        genre: editStoryGenre || writingStory.genre,
         title_font: storyTitleFont,
         title_font_weight: storyTitleFontWeight,
         signature_font: storySignatureFont,
@@ -1032,6 +1144,30 @@ export default function App() {
       setMyStories(prev => prev.map(s => s.id === up.id ? up : s));
       await refreshStoryCatalog();
       alert(up.isPublished ? "🎉 Votre œuvre est désormais gravée sur la place publique de Stilova !" : "📁 Votre œuvre a été retirée de la place publique.");
+
+      if (up.isPublished) {
+        try {
+          const followers = await dbService.getFollowers(writingStory.authorId);
+          for (const recipientId of followers) {
+            if (currentUser && recipientId === currentUser.uid) continue;
+            const notif: Notification = {
+              id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              userId: recipientId,
+              senderId: writingStory.authorId,
+              senderName: writingStory.authorName,
+              type: "new_story",
+              storyId: writingStory.id,
+              storyTitle: writingStory.title,
+              message: `L'auteur ${writingStory.authorName} a publié une nouvelle œuvre : "${writingStory.title}" ! Découvre-la sans attendre !`,
+              read: false,
+              createdAt: new Date().toISOString()
+            };
+            await dbService.saveNotification(notif);
+          }
+        } catch (err) {
+          console.warn("[Social Notification] Error distributing new story notification:", err);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -1228,7 +1364,68 @@ export default function App() {
             )}
 
             {currentUser ? (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 relative">
+                
+                {/* Notification Bell */}
+                <div className="relative">
+                  <button
+                    onClick={() => setIsNotifOpen(!isNotifOpen)}
+                    className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition relative cursor-pointer"
+                    title="Notifications"
+                  >
+                    <Bell className="w-4 h-4" />
+                    {notifications.filter(n => !n.read).length > 0 && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    )}
+                  </button>
+
+                  {/* Dropdown overlay */}
+                  {isNotifOpen && (
+                    <div className="absolute right-0 mt-2 w-80 bg-slate-950 border border-slate-800 rounded-2xl shadow-xl shadow-black/80 z-50 py-3 font-sans max-h-96 overflow-y-auto">
+                      <div className="flex items-center justify-between px-4 pb-2 border-b border-slate-900">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notifications</span>
+                        {notifications.filter(n => !n.read).length > 0 && (
+                          <span className="text-[9px] font-mono text-amber-500 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">
+                            {notifications.filter(n => !n.read).length} nouvelles
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col mt-2">
+                        {notifications.length === 0 ? (
+                          <div className="text-center py-6 text-slate-600 text-xs font-sans">
+                            Aucune notification pour le moment.
+                          </div>
+                        ) : (
+                          notifications.map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => handleMarkNotifRead(notif)}
+                              className={`px-4 py-3 border-b border-slate-900/40 last:border-0 hover:bg-slate-900 cursor-pointer transition text-left flex flex-col gap-1 ${
+                                !notif.read ? "bg-slate-900/30 border-l-2 border-l-amber-500 pl-3" : ""
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-bold text-amber-500 tracking-wide">
+                                  {notif.type === "new_chapter" ? "📢 NOUVEAU CHAPITRE" :
+                                   notif.type === "new_story" ? "📚 NOUVELLE ŒUVRE" :
+                                   notif.type === "like" ? "💖 J'AIME" : "👥 ABONNEMENT"}
+                                </span>
+                                <span className="text-[8px] text-slate-500 font-mono">
+                                  {new Date(notif.createdAt).toLocaleDateString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-200 leading-relaxed font-sans">{notif.message}</p>
+                              {!notif.read && (
+                                <span className="text-[8px] font-bold text-amber-500/80 uppercase tracking-widest mt-0.5">Marquer comme lu</span>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div 
                   onClick={() => changeRoute("profile")}
                   className="flex items-center gap-2 hidden sm:flex cursor-pointer hover:opacity-80 transition"
@@ -1567,6 +1764,7 @@ export default function App() {
             onStartReading={handleOpenStoryReaderFromDetail}
             isVisitor={!currentUser}
             onActionLockTrigger={handleProtectedActionTrigger}
+            currentUser={currentUser}
           />
         )}
 
@@ -2116,6 +2314,73 @@ export default function App() {
                             </label>
                           </div>
 
+                          {/* MVP Audio Feature - Upload & preview */}
+                          <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3 mt-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-amber-500 font-bold uppercase tracking-wider font-mono">
+                                🎙️ Piste Sonore du Chapitre (Optionnel)
+                              </span>
+                              <span className="text-[9px] text-slate-500 font-sans">
+                                Formats : MP3, M4A, WAV (Max 50 Mo)
+                              </span>
+                            </div>
+
+                            {!newNodeAudioUrl ? (
+                              <div className="relative border border-dashed border-slate-800 hover:border-amber-500/30 rounded-xl p-4 transition-all duration-200 bg-slate-950/20 text-center flex flex-col items-center justify-center gap-2">
+                                <input
+                                  type="file"
+                                  accept="audio/mp3,audio/mpeg,audio/wav,audio/x-wav,audio/m4a,audio/x-m4a"
+                                  onChange={handleAudioUpload}
+                                  disabled={uploadingAudio}
+                                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                />
+                                <Upload className="w-5 h-5 text-slate-500 hover:text-amber-500/80 transition" />
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs text-slate-400 font-sans">
+                                    {uploadingAudio ? "Téléversement en cours sur Supabase..." : "Cliquez ou glissez une bande-son"}
+                                  </span>
+                                  <span className="text-[9px] text-slate-600">
+                                    Elle sera jouée automatiquement en arrière-plan durant la lecture immersive.
+                                  </span>
+                                </div>
+                                {uploadingAudio && (
+                                  <div className="w-full max-w-[200px] bg-slate-800 h-1 rounded-full overflow-hidden mt-1">
+                                    <div className="bg-amber-500 h-full animate-pulse" style={{ width: "70%" }} />
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-2 bg-slate-950/50 border border-slate-800 p-3 rounded-xl">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                    <div className="w-6 h-6 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+                                      <Play className="w-3.5 h-3.5 text-amber-500 fill-amber-500/20" />
+                                    </div>
+                                    <div className="flex flex-col overflow-hidden text-left">
+                                      <span className="text-[10px] text-slate-300 font-mono font-bold truncate">Piste Rattachée</span>
+                                      <span className="text-[8px] text-slate-500 truncate">{newNodeAudioUrl}</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={handleAudioRemove}
+                                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/45 border border-slate-850 hover:border-rose-900/50 text-slate-400 hover:text-rose-400 transition shrink-0 cursor-pointer"
+                                    title="Supprimer la piste sonore"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                
+                                <audio src={newNodeAudioUrl} controls className="w-full h-8 opacity-80 mt-1" />
+                              </div>
+                            )}
+
+                            {audioUploadError && (
+                              <span className="text-[9px] text-rose-400 font-sans font-medium">
+                                ⚠ Erreur : {audioUploadError}
+                              </span>
+                            )}
+                          </div>
+
                           <button
                             onClick={handleSaveNodeChanges}
                             disabled={savingNode}
@@ -2206,6 +2471,60 @@ export default function App() {
                     
                     {/* Configurations columns */}
                     <div className="xl:col-span-3 flex flex-col gap-6">
+                      
+                      {/* 0. MODIFICATION DE L'HISTOIRE (Titre, Genre, Couverture) */}
+                      <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4 shadow-[#000000]/60 shadow-lg">
+                        <div className="flex items-center gap-2 pb-2.5 border-b border-slate-900">
+                          <PenTool className="w-4 h-4 text-amber-500" />
+                          <span className="text-xs font-bold text-slate-200 uppercase tracking-widest">Informations Générales de l'Œuvre</span>
+                        </div>
+                        
+                        <div className="flex flex-col gap-3 font-sans">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Titre de l'Œuvre</label>
+                            <input
+                              type="text"
+                              value={editStoryTitle}
+                              onChange={(e) => setEditStoryTitle(e.target.value)}
+                              placeholder="Nouveau titre de l'histoire"
+                              className="bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs text-slate-100 outline-none w-full"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Genre / Catégorie Littéraire</label>
+                            <select
+                              value={editStoryGenre}
+                              onChange={(e) => setEditStoryGenre(e.target.value)}
+                              className="bg-slate-900 border border-slate-800 py-2 px-3 rounded-xl text-xs text-slate-250 outline-none cursor-pointer w-full"
+                            >
+                              <option value="Roman">📖 Roman</option>
+                              <option value="Poésie">✍ Poésie</option>
+                              <option value="Nouvelle">📜 Nouvelle</option>
+                              <option value="Conte Africain">🦁 Conte Africain</option>
+                              <option value="Théâtre">🎭 Théâtre</option>
+                              <option value="Épopée">🛡 Épopée</option>
+                              <option value="Thriller/Policier">🔍 Thriller/Policier</option>
+                              <option value="Science-Fiction">🚀 Science-Fiction</option>
+                              <option value="Fantastique">🔮 Fantastique</option>
+                              <option value="Romance">💖 Romance</option>
+                              <option value="Développement Personnel">🌱 Développement Personnel</option>
+                              <option value="Essai">📝 Essai</option>
+                              <option value="Chronique de Vie">⏳ Chronique de Vie</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 mt-1">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase font-sans">Image de Couverture</label>
+                            <CoverUploader
+                              currentCoverUrl={editStoryCover}
+                              onCoverChanged={(url) => setEditStoryCover(url)}
+                              userId={currentUser.uid}
+                              userRole={currentUser.role}
+                            />
+                          </div>
+                        </div>
+                      </div>
                       
                       {/* 1. Polices pour les titres */}
                       <div className="bg-slate-950 border border-slate-800 p-5 rounded-3xl flex flex-col gap-4 shadow-[#000000]/60 shadow-lg">
@@ -2853,17 +3172,25 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-slate-400 font-bold uppercase">Univers Panafricain</label>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase">Genre / Catégorie Littéraire</label>
                   <select
                     value={newGenre}
                     onChange={(e) => setNewGenre(e.target.value as AfricanGenre)}
                     className="bg-slate-950 border border-slate-800 py-2.5 px-3 rounded-xl text-xs text-slate-250 outline-none cursor-pointer"
                   >
-                    <option value="afrofuturism">🚀 Afrofuturisme</option>
-                    <option value="mythology">🔱 Mythologie</option>
-                    <option value="historical">📜 Chronique Historique</option>
-                    <option value="romance">💖 Roman d'amour</option>
-                    <option value="drama">🎭 Drame Social</option>
+                    <option value="Roman">📖 Roman</option>
+                    <option value="Poésie">✍ Poésie</option>
+                    <option value="Nouvelle">📜 Nouvelle</option>
+                    <option value="Conte Africain">🦁 Conte Africain</option>
+                    <option value="Théâtre">🎭 Théâtre</option>
+                    <option value="Épopée">🛡 Épopée</option>
+                    <option value="Thriller/Policier">🔍 Thriller/Policier</option>
+                    <option value="Science-Fiction">🚀 Science-Fiction</option>
+                    <option value="Fantastique">🔮 Fantastique</option>
+                    <option value="Romance">💖 Romance</option>
+                    <option value="Développement Personnel">🌱 Développement Personnel</option>
+                    <option value="Essai">📝 Essai</option>
+                    <option value="Chronique de Vie">⏳ Chronique de Vie</option>
                   </select>
                 </div>
 
