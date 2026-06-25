@@ -12,7 +12,12 @@ function sanitizeConfigValue(val: string): string {
 
 function sanitizeSupabaseUrl(url: string): string {
   let clean = sanitizeConfigValue(url);
-  // Strip any trailing slashes to avoid issues like: https://xxxx.supabase.co//storage/v1/bucket
+  // Strip any trailing slashes
+  clean = clean.replace(/\/+$/, "");
+  // Strip common appended path prefixes that are automatically added by Supabase SDK but cause double-paths if present in the base URL
+  clean = clean.replace(/\/storage\/v1\/?$/, "");
+  clean = clean.replace(/\/rest\/v1\/?$/, "");
+  // Strip any trailing slashes again after replacements
   clean = clean.replace(/\/+$/, "");
   return clean;
 }
